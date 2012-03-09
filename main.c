@@ -38,8 +38,6 @@ GHashTable        *actions      = NULL;
  * whether or not there's (already) one, to detect conflicts. 
  * (not static for use in actions.c ) */
 GHashTable        *new_names    = NULL;
-/* list of commands (command_t) */
-static GSList     *commands     = NULL;
 /* number of conflicts (standard & FS) (not static for use in actions.c ) */
 gint               nb_conflicts = 0;
 /* number of actions requiring two-steps renaming jobs (not static for use in actions.c ) */
@@ -303,22 +301,6 @@ free_memory (void)
         debug (LEVEL_DEBUG, "free-ing list of new names\n");
         g_hash_table_destroy (new_names);
     }
-    
-    if (commands)
-    {
-        debug (LEVEL_DEBUG, "free-ing commands\n");
-        for (l = commands; l; l = l->next)
-        {
-            command_t *command = l->data;
-            debug (LEVEL_VERBOSE, "free-ing command for rule %s\n", command->rule->name);
-            if (command->rule->destroy)
-            {
-                command->rule->destroy (&(command->data));
-            }
-            g_slice_free (command_t, command);
-        }
-        g_slist_free (commands);
-    }
 
     if (rules)
     {
@@ -556,6 +538,25 @@ do_rename (action_t *action, const gchar *old_name, const gchar *new_name)
     return state;
 }
 
+static void
+free_commands (GSList *commands)
+{
+    GSList *l;
+    
+    debug (LEVEL_DEBUG, "free-ing commands\n");
+    for (l = commands; l; l = l->next)
+    {
+        command_t *command = l->data;
+        debug (LEVEL_VERBOSE, "free-ing command for rule %s\n", command->rule->name);
+        if (command->rule->destroy)
+        {
+            command->rule->destroy (&(command->data));
+        }
+        g_slice_free (command_t, command);
+    }
+    g_slist_free (commands);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -568,6 +569,7 @@ main (int argc, char **argv)
     GModule       *module;
     init_fn        init;
     
+    GSList        *commands = NULL;
     command_t     *command;
     GPtrArray     *ptr_arr;
     guint          i;
@@ -843,11 +845,22 @@ main (int argc, char **argv)
     /* show errors if any, exit unless continue-on-error is set */
     if (errors)
     {
+        if (commands)
+        {
+            free_commands (commands);
+        }
         /* ERROR_SYNTAX means invalid option or something, so we bail out
          * even with continue-on-error
          * ERROR_RULE_FAILED is pretty much the same, only maybe worse, as it
          * means a command/rule could not be init, and was ignored! */
         error_out (!continue_on_error || err & (ERROR_RULE_FAILED | ERROR_SYNTAX));
+    }
+    
+    /* make sure we have something to do */
+    if (!commands)
+    {
+        error (ERROR_SYNTAX, "nothing to do: no rules to be applied\n");
+        error_out (TRUE);
     }
     
     /* create hashmap of actions */
@@ -860,6 +873,10 @@ main (int argc, char **argv)
     /* get curdir */
     if (!(curdir = getcwd (NULL, 0)))
     {
+        if (commands)
+        {
+            free_commands (commands);
+        }
         error (ERROR_NONE, "Unable to get current path\n");
         /* this is an error we can't ignore */
         error_out (TRUE);
@@ -969,6 +986,7 @@ main (int argc, char **argv)
         /* and in list, to preserve order (when processing) */
         actions_list = g_slist_append (actions_list, (gpointer) action);
     }
+    free_commands (commands);
     
     /* show errors if any, exit unless continue-on-error is set */
     if (errors)
@@ -983,7 +1001,7 @@ main (int argc, char **argv)
     if (G_UNLIKELY (!actions_list))
     {
         /* i.e. nothing was specified on command-line, hence ERROR_SYNTAX */
-        error (ERROR_SYNTAX, "nothing to do\n");
+        error (ERROR_SYNTAX, "nothing to do: no files to rename\n");
         error_out (TRUE);
     }
     
