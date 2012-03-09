@@ -557,6 +557,116 @@ free_commands (GSList *commands)
     g_slist_free (commands);
 }
 
+static void
+add_action (gchar *file, GFileTest test_types, guint *cur,
+            GSList *commands, GSList **actions_list)
+{
+    GError    *local_err = NULL;
+    action_t  *action;
+    command_t *command;
+    gchar     *new_name;
+    GSList    *l;
+    
+    if (!g_file_test (file, G_FILE_TEST_EXISTS))
+    {
+        error (ERROR_FILE, "file does not exist: %s\n", file);
+        return;
+    }
+    if (test_types == (G_FILE_TEST_IS_REGULAR | G_FILE_TEST_IS_DIR
+                        | G_FILE_TEST_IS_SYMLINK))
+    {
+        debug (LEVEL_DEBUG, "process: %s\n", file);
+    }
+    else if (test_types & G_FILE_TEST_IS_REGULAR
+        && g_file_test (file, G_FILE_TEST_IS_REGULAR))
+    {
+        debug (LEVEL_DEBUG, "process file: %s\n", file);
+    }
+    else if (test_types & G_FILE_TEST_IS_DIR
+        && g_file_test (file, G_FILE_TEST_IS_DIR))
+    {
+        debug (LEVEL_DEBUG, "process dir: %s\n", file);
+    }
+    else if (test_types & G_FILE_TEST_IS_SYMLINK
+        && g_file_test (file, G_FILE_TEST_IS_SYMLINK))
+    {
+        debug (LEVEL_DEBUG, "process symlink: %s\n", file);
+    }
+    else
+    {
+        debug (LEVEL_DEBUG, "ignore: %s\n", file);
+        return;
+    }
+    /* create new action */
+    action = g_slice_new0 (action_t);
+    action->cur = ++*cur;
+    set_action_path_file (action, file);
+    /* put in the new name a copy of the current one. this will be free-d
+        * and updated after each rule that does provide a new name */
+    action->new_name = g_strdup (action->file);
+
+    /* run rules and get the new name */
+    new_name = NULL;
+    for (l = commands; l; l = l->next)
+    {
+        command = l->data;
+        debug (LEVEL_DEBUG, "running rule %s on %s\n", command->rule->name,
+                action->new_name);
+        if (G_LIKELY (command->rule->run (&(command->data),
+                                            action->new_name,
+                                            &new_name,
+                                            &local_err)))
+        {
+            /* did we get a new name? */
+            if (new_name)
+            {
+                debug (LEVEL_VERBOSE, "new name: %s\n", new_name);
+                g_free (action->new_name);
+                action->new_name = new_name;
+                new_name = NULL;
+            }
+        }
+        else
+        {
+            error (ERROR_RULE_FAILED, "%s: rule %s failed: %s\n",
+                    action->file, command->rule->name, local_err->message);
+            g_clear_error (&local_err);
+            /* we can't continue processing this action now */
+            g_free (action->new_name);
+            action->new_name = NULL;
+            break;
+        }
+    }
+    debug (LEVEL_DEBUG, "all commands applied\n");
+    /* check whether we actually have a new name or not */
+    if (g_strcmp0 (action->new_name, action->file) != 0)
+    {
+        /* check validity of new name */
+        if (strlen (action->new_name) == 0 || strchr (action->new_name, '/'))
+        {
+            error (ERROR_INVALID_NAME, "%s: invalid new name: %s\n",
+                    action->file, action->new_name);
+            g_free (action->new_name);
+            action->new_name = NULL;
+        }
+        else
+        {
+            debug (LEVEL_DEBUG, "new name: %s\n", action->new_name);
+            set_to_rename (action, action);
+        }
+    }
+    else
+    {
+        debug (LEVEL_DEBUG, "no new name\n");
+        /* no new name, we can free this */
+        g_free (action->new_name);
+        action->new_name = NULL;
+    }
+    /* add action to hashmap (for easy access) */
+    g_hash_table_insert (actions, (gpointer) action->file, (gpointer) action);
+    /* and in list, to preserve order (when processing) */
+    *actions_list = g_slist_append (*actions_list, (gpointer) action);
+}
 int
 main (int argc, char **argv)
 {
@@ -586,7 +696,6 @@ main (int argc, char **argv)
     action_t      *action;
     guint          cur;
     GSList        *l;
-    gchar         *new_name;
     
     /* try to get debug option now so it applies to loading rules as well.
      * Note: only works if the first option is -d[d] (--debug not supported) */
@@ -885,106 +994,7 @@ main (int argc, char **argv)
     debug (LEVEL_DEBUG, "process file names, i=%d\n", argi);
     for (cur = 0; argi < argc; ++argi)
     {
-        
-        if (!g_file_test (argv[argi], G_FILE_TEST_EXISTS))
-        {
-            error (ERROR_FILE, "file does not exist: %s\n", argv[argi]);
-            continue;
-        }
-        if (test_types == (G_FILE_TEST_IS_REGULAR | G_FILE_TEST_IS_DIR
-                           | G_FILE_TEST_IS_SYMLINK))
-        {
-            debug (LEVEL_DEBUG, "process: %s\n", argv[argi]);
-        }
-        else if (test_types & G_FILE_TEST_IS_REGULAR
-            && g_file_test (argv[argi], G_FILE_TEST_IS_REGULAR))
-        {
-            debug (LEVEL_DEBUG, "process file: %s\n", argv[argi]);
-        }
-        else if (test_types & G_FILE_TEST_IS_DIR
-            && g_file_test (argv[argi], G_FILE_TEST_IS_DIR))
-        {
-            debug (LEVEL_DEBUG, "process dir: %s\n", argv[argi]);
-        }
-        else if (test_types & G_FILE_TEST_IS_SYMLINK
-            && g_file_test (argv[argi], G_FILE_TEST_IS_SYMLINK))
-        {
-            debug (LEVEL_DEBUG, "process symlink: %s\n", argv[argi]);
-        }
-        else
-        {
-            debug (LEVEL_DEBUG, "ignore: %s\n", argv[argi]);
-            continue;
-        }
-        /* create new action */
-        action = g_slice_new0 (action_t);
-        action->cur = ++cur;
-        set_action_path_file (action, argv[argi]);
-        /* put in the new name a copy of the current one. this will be free-d
-         * and updated after each rule that does provide a new name */
-        action->new_name = g_strdup (action->file);
-        
-        /* run rules and get the new name */
-        new_name = NULL;
-        for (l = commands; l; l = l->next)
-        {
-            command = l->data;
-            debug (LEVEL_DEBUG, "running rule %s on %s\n", command->rule->name,
-                   action->new_name);
-            if (G_LIKELY (command->rule->run (&(command->data),
-                                              action->new_name,
-                                              &new_name,
-                                              &local_err)))
-            {
-                /* did we get a new name? */
-                if (new_name)
-                {
-                    debug (LEVEL_VERBOSE, "new name: %s\n", new_name);
-                    g_free (action->new_name);
-                    action->new_name = new_name;
-                    new_name = NULL;
-                }
-            }
-            else
-            {
-                error (ERROR_RULE_FAILED, "%s: rule %s failed: %s\n",
-                       action->file, command->rule->name, local_err->message);
-                g_clear_error (&local_err);
-                /* we can't continue processing this action now */
-                g_free (action->new_name);
-                action->new_name = NULL;
-                break;
-            }
-        }
-        debug (LEVEL_DEBUG, "all commands applied\n");
-        /* check whether we actually have a new name or not */
-        if (g_strcmp0 (action->new_name, action->file) != 0)
-        {
-            /* check validity of new name */
-            if (strlen (action->new_name) == 0 || strchr (action->new_name, '/'))
-            {
-                error (ERROR_INVALID_NAME, "%s: invalid new name: %s\n",
-                       action->file, action->new_name);
-                g_free (action->new_name);
-                action->new_name = NULL;
-            }
-            else
-            {
-                debug (LEVEL_DEBUG, "new name: %s\n", action->new_name);
-                set_to_rename (action, action);
-            }
-        }
-        else
-        {
-            debug (LEVEL_DEBUG, "no new name\n");
-            /* no new name, we can free this */
-            g_free (action->new_name);
-            action->new_name = NULL;
-        }
-        /* add action to hashmap (for easy access) */
-        g_hash_table_insert (actions, (gpointer) action->file, (gpointer) action);
-        /* and in list, to preserve order (when processing) */
-        actions_list = g_slist_append (actions_list, (gpointer) action);
+        add_action (argv[argi], test_types, &cur, commands, &actions_list);
     }
     free_commands (commands);
     
