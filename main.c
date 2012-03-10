@@ -259,7 +259,7 @@ split_params (gchar *arg, GPtrArray **params)
     while ((s = strchr (a, '/')))
     {
         /* make sure it's not escaped */
-        for (i = 1, ss = s - 1; ss > a && *ss == '\\'; --ss, ++i)
+        for (i = 1, ss = s - 1; ss >= a && *ss == '\\'; --ss, ++i)
             ;
         if (!(i % 2))
         {
@@ -278,7 +278,7 @@ split_params (gchar *arg, GPtrArray **params)
         /* move beginning of next one */
         p = s + 1;
         /* and move beginning of next search */
-        a = s + 1;
+        a = p;
     }
     /* add the last param */
     debug (LEVEL_DEBUG, "param: %s\n", p);
