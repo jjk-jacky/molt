@@ -44,6 +44,13 @@ gint               nb_conflicts = 0;
 gint               nb_two_steps = 0;
 /* current pathname */
 static gchar      *curdir       = NULL;
+/* whether rules are given the full path/filename (or just filename) */
+static gboolean    process_fullname = FALSE;
+/* whether output shows the full path/filename (or just filename) */
+static gboolean    output_fullname = FALSE;
+/* whether rules can give a new name with slashes or not */
+/* Note: only if process_fullname == FALSE obviously */
+static gboolean    allow_path = FALSE;
 
 void
 debug (level_t lvl, const gchar *fmt, ...)
@@ -161,7 +168,7 @@ static void
 free_action (action_t *action)
 {
     debug (LEVEL_VERBOSE, "free-ing action for %s\n", action->file);
-    g_free (action->path);
+    g_free (action->file);
     if (action->tmp_name)
     {
         g_free (action->tmp_name);
@@ -186,26 +193,26 @@ strpchr (gchar *string, gchar *start, gchar c)
 }
 
 static void
-set_action_path_file (action_t *action, gchar *file)
+set_full_file_name (gchar *file, gchar **fullname, gchar **filename)
 {
     gchar *path;
     gchar *s, *p;
     
-    debug (LEVEL_VERBOSE, "setting path/file for %s\n", file);
+    debug (LEVEL_VERBOSE, "setting {full,file}name for %s\n", file);
     
     if (file[0] == '/')
     {
-        action->path = g_malloc (strlen (file) + 1);
-        sprintf (action->path, "%s", file);
+        *fullname = g_malloc (strlen (file) + 1);
+        sprintf (*fullname, "%s", file);
         
     }
     else
     {
-        action->path = g_malloc (strlen (curdir) + strlen (file) + 2);
-        sprintf (action->path, "%s/%s", curdir, file);
+        *fullname = g_malloc (strlen (curdir) + strlen (file) + 2);
+        sprintf (*fullname, "%s/%s", curdir, file);
     }
     
-    path = action->path + 1;
+    path = *fullname + 1;
     while ((s = strchr (path, '/')))
     {
         if (s == path + 1 && *path == '.')
@@ -217,7 +224,11 @@ set_action_path_file (action_t *action, gchar *file)
         else if (s == path + 2 && *path == '.' && *(path + 1) == '.')
         {
             /* find the "/" before the current one */
-            p = strpchr (action->path, path - 2, '/');
+            p = strpchr (*fullname, path - 2, '/');
+            if (!p)
+            {
+                break;
+            }
             /* and move the part after "../" back before */            
             memmove (p + 1, s + 1, strlen (s + 1) + 1);
             /* now update path to point to the newly copied path */
@@ -229,10 +240,9 @@ set_action_path_file (action_t *action, gchar *file)
         }
     }
     
-    s = strrchr (action->path, '/');
-    *s = '\0';
-    action->file = s + 1;
-    debug (LEVEL_DEBUG, "path=%s -- file=%s\n", action->path, action->file);
+    s = strrchr (*fullname, '/');
+    *filename = s + 1;
+    debug (LEVEL_DEBUG, "fullname=%s -- filename=%s\n", *fullname, *filename);
 }
 
 static void
@@ -359,8 +369,12 @@ static option_t options[] = {
     { OPT_EXCLUDE_DIRS,         "exclude-directories" },
     { OPT_EXCLUDE_FILES,        "exclude-files" },
     { OPT_EXCLUDE_SYMLINKS,     "exclude-symlinks" },
-    { OPT_OUTPUT,               "output" },
+    { OPT_OUTPUT_BOTH,          "output-both-names" },
+    { OPT_OUTPUT_NEW,           "output-new-names" },
     { OPT_ONLY_RULES,           "only-rules" },
+    { OPT_PROCESS_FULLNAME,     "process-fullname" },
+    { OPT_OUTPUT_FULLNAME,      "output-fullname" },
+    { OPT_ALLOW_PATH,           "allow-path" },
 };
 static gint nb_options = sizeof (options) / sizeof (options[0]);
 
@@ -443,6 +457,33 @@ process_arg (int argc, char *argv[], gint *argi, gchar **option)
 static inline void
 show_output (output_t output, gint state, action_t *action, gchar *name)
 {
+    gchar *file = (output_fullname) ? action->file : action->filename;
+    gchar *new;
+    
+    /* might might be new_name if we renamed */
+    if (name == action->new_name)
+    {
+        new = (output_fullname) ? action->new_name : action->new_filename;
+    }
+    /* or it might be file if there's no rename (whatever the reason) */
+    else if (name == action->file)
+    {
+        new = file;
+    }
+    /* or it could be tmp_name if the 2nd renaming step failed */
+    else /* if (name == action->tmp_name) */
+    {
+        if (output_fullname)
+        {
+            new = name;
+        }
+        else
+        {
+            new = strrchr (name, '/');
+            ++new;
+        }
+    }
+    
     /* if there was no success AND there is a tmp_name it can only mean one
      * thing: the second rename (tmp -> new) just failed */
     if (G_UNLIKELY (state != 0 && action->tmp_name))
@@ -455,15 +496,14 @@ show_output (output_t output, gint state, action_t *action, gchar *name)
         case OUTPUT_STANDARD:
             if (state == 0)
             {
-                fprintf (stdout, "%s -> %s\n", action->file,
-                         name);
+                fprintf (stdout, "%s -> %s\n", file, new);
             }
             break;
         case OUTPUT_BOTH_NAMES:
-            fprintf (stdout, "%s\n", action->file);
+            fprintf (stdout, "%s\n", file);
             /* fall through */
         case OUTPUT_NEW_NAMES:
-            fprintf (stdout, "%s\n", name);
+            fprintf (stdout, "%s\n", new);
             break;
     }
 }
@@ -512,32 +552,6 @@ get_tmp_name (const gchar *name)
     }                                                   \
 } while (0)
 
-static gint
-do_rename (action_t *action, const gchar *old_name, const gchar *new_name)
-{
-    gchar *old, *new;
-    size_t len_path = strlen (action->path) + 1; /* 1: the '/' */
-    gint state;
-    
-    old = g_malloc (len_path + strlen (old_name) + 1);
-    sprintf (old, "%s/%s", action->path, old_name);
-    
-    new = g_malloc (len_path + strlen (new_name) + 1);
-    sprintf (new, "%s/%s", action->path, new_name);
-    
-    debug (LEVEL_DEBUG, "renaming %s to %s\n", old, new);
-    if (G_UNLIKELY (0 != (state = rename (old, new))))
-    {
-        action_error ("%s: failed to rename to %s: %s\n",
-                      action->file, new_name, strerror (errno));
-    }
-    
-    g_free (old);
-    g_free (new);
-    
-    return state;
-}
-
 static void
 free_commands (GSList *commands)
 {
@@ -558,8 +572,8 @@ free_commands (GSList *commands)
 }
 
 static void
-add_action (gchar *file, GFileTest test_types, guint *cur,
-            GSList *commands, GSList **actions_list)
+add_action_for_file (gchar *file, GFileTest test_types, guint *cur,
+                     GSList *commands, GSList **actions_list)
 {
     GError    *local_err = NULL;
     action_t  *action;
@@ -597,21 +611,30 @@ add_action (gchar *file, GFileTest test_types, guint *cur,
         debug (LEVEL_DEBUG, "ignore: %s\n", file);
         return;
     }
+    
     /* create new action */
     action = g_slice_new0 (action_t);
     action->cur = ++*cur;
-    set_action_path_file (action, file);
+    set_full_file_name (file, &(action->file), &(action->filename));
+    /* make sure there isn't already an action for this file */
+    if (g_hash_table_lookup (actions, (gpointer) action->file))
+    {
+        debug (LEVEL_DEBUG, "already an action for this file, aborting\n");
+        free_action (action);
+        --*cur;
+        return;
+    }
     /* put in the new name a copy of the current one. this will be free-d
-        * and updated after each rule that does provide a new name */
-    action->new_name = g_strdup (action->file);
-
+     * and updated after each rule that does provide a new name */
+    action->new_name = g_strdup ((process_fullname) ? action->file : action->filename);
+    
     /* run rules and get the new name */
     new_name = NULL;
     for (l = commands; l; l = l->next)
     {
         command = l->data;
         debug (LEVEL_DEBUG, "running rule %s on %s\n", command->rule->name,
-                action->new_name);
+               action->new_name);
         if (G_LIKELY (command->rule->run (&(command->data),
                                             action->new_name,
                                             &new_name,
@@ -629,7 +652,7 @@ add_action (gchar *file, GFileTest test_types, guint *cur,
         else
         {
             error (ERROR_RULE_FAILED, "%s: rule %s failed: %s\n",
-                    action->file, command->rule->name, local_err->message);
+                   action->file, command->rule->name, local_err->message);
             g_clear_error (&local_err);
             /* we can't continue processing this action now */
             g_free (action->new_name);
@@ -639,18 +662,42 @@ add_action (gchar *file, GFileTest test_types, guint *cur,
     }
     debug (LEVEL_DEBUG, "all commands applied\n");
     /* check whether we actually have a new name or not */
-    if (g_strcmp0 (action->new_name, action->file) != 0)
+    if (g_strcmp0 (action->new_name,
+                   (process_fullname) ? action->file : action->filename) != 0)
     {
         /* check validity of new name */
-        if (strlen (action->new_name) == 0 || strchr (action->new_name, '/'))
+        gboolean is_valid = (strlen (action->new_name) > 0);
+        
+        if (is_valid)
+        {
+            if (process_fullname)
+            {
+                /* must be a full path*/
+                is_valid = action->new_name[0] == '/';
+            }
+            else if (!allow_path)
+            {
+                is_valid = (NULL == strchr (action->new_name, '/'));
+            }
+        }
+        
+        if (!is_valid)
         {
             error (ERROR_INVALID_NAME, "%s: invalid new name: %s\n",
-                    action->file, action->new_name);
+                   action->file, action->new_name);
             g_free (action->new_name);
             action->new_name = NULL;
         }
         else
         {
+            /* set the fullname and pointer to the filename */
+            new_name = action->new_name;
+            /* will determine whether it's a full path or not, and if not
+             * prefix with the curdir.
+             * This also removes ./ and "resolves" ../ to get a "real" path */
+            set_full_file_name (new_name, &(action->new_name), &(action->new_filename));
+            g_free (new_name);
+            
             debug (LEVEL_DEBUG, "new name: %s\n", action->new_name);
             set_to_rename (action, action);
         }
@@ -667,6 +714,16 @@ add_action (gchar *file, GFileTest test_types, guint *cur,
     /* and in list, to preserve order (when processing) */
     *actions_list = g_slist_append (*actions_list, (gpointer) action);
 }
+
+#define do_rename(old_name, new_name)   do {                            \
+        debug (LEVEL_DEBUG, "renaming %s to %s\n", old_name, new_name); \
+        if (G_UNLIKELY (0 != (state = rename (old_name, new_name))))    \
+        {                                                               \
+            action_error ("%s: failed to rename to %s: %s\n",           \
+                        action->file, new_name, strerror (errno));      \
+        }                                                               \
+    } while (0)
+
 int
 main (int argc, char **argv)
 {
@@ -849,29 +906,29 @@ main (int argc, char **argv)
                 case OPT_EXCLUDE_SYMLINKS:
                     test_types ^= G_FILE_TEST_IS_SYMLINK;
                     break;
-                case OPT_OUTPUT:
-                    ++argi;
-                    if (strcmp (argv[argi], "new-names") == 0)
-                    {
-                        output = OUTPUT_NEW_NAMES;
-                    }
-                    else if (strcmp (argv[argi], "both-names") == 0)
-                    {
-                        output = OUTPUT_BOTH_NAMES;
-                    }
-                    else
-                    {
-                        error (ERROR_SYNTAX, "Invalid output mode: %s\n",
-                               argv[argi]);
-                    }
-                    debug (LEVEL_DEBUG, "output=%d\n", output);
-                    ++argi;
+                case OPT_OUTPUT_BOTH:
+                    output = OUTPUT_BOTH_NAMES;
+                    break;
+                case OPT_OUTPUT_NEW:
+                    output = OUTPUT_NEW_NAMES;
+                    break;
+                case OPT_OUTPUT_FULLNAME:
+                    output_fullname = TRUE;
                     break;
                 case OPT_ONLY_RULES:
                     only_rules = TRUE;
-                    /* only-rules implies dry-run */
                     debug (LEVEL_DEBUG, "implied option --dry-run\n");
                     dry_run = TRUE;
+                    break;
+                case OPT_PROCESS_FULLNAME:
+                    process_fullname = TRUE;
+                    debug (LEVEL_DEBUG, "implied option --output-fullname\n");
+                    output_fullname = TRUE;
+                    break;
+                case OPT_ALLOW_PATH:
+                    allow_path = TRUE;
+                    debug (LEVEL_DEBUG, "implied option --output-fullname\n");
+                    output_fullname = TRUE;
                     break;
             }
         }
@@ -994,7 +1051,7 @@ main (int argc, char **argv)
     debug (LEVEL_DEBUG, "process file names, i=%d\n", argi);
     for (cur = 0; argi < argc; ++argi)
     {
-        add_action (argv[argi], test_types, &cur, commands, &actions_list);
+        add_action_for_file (argv[argi], test_types, &cur, commands, &actions_list);
     }
     free_commands (commands);
     
@@ -1046,7 +1103,7 @@ main (int argc, char **argv)
                     /* name could be NULL if get_tmp_name() somehow failed */
                     if (G_LIKELY (name))
                     {
-                        state = do_rename (action, action->file, name);
+                        do_rename (action->file, name);
                     }
                     else
                     {
@@ -1117,7 +1174,7 @@ main (int argc, char **argv)
             
             if (action->tmp_name)
             {
-                state = do_rename (action, action->tmp_name, name);
+                do_rename (action->tmp_name, name);
                 if (G_UNLIKELY (state != 0))
                 {
                     /* do_rename took care of the error message */
@@ -1153,3 +1210,4 @@ main (int argc, char **argv)
     free_memory ();
     return err; /* err == 0 */
 }
+#undef do_rename

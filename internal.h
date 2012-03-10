@@ -31,9 +31,10 @@ typedef enum {
 /* action: original filename, new one, etc */
 typedef struct {
     guint     cur;
-    gchar    *path;
 	gchar    *file;
+    gchar    *filename;
 	gchar    *new_name;
+    gchar    *new_filename;
 	gchar    *tmp_name;
 	state_t   state;
     gchar    *error;
