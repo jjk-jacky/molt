@@ -20,6 +20,7 @@ extern "C" {
 #define OPT_PROCESS_FULLNAME        'P'
 #define OPT_OUTPUT_FULLNAME         'O'
 #define OPT_ALLOW_PATH              'p'
+#define OPT_FROM_STDIN              'i'
 
 typedef struct {
 	gchar        opt_short;

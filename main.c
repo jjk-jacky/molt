@@ -126,7 +126,7 @@ get_stdin (gpointer *stream, GError **_error)
     
     if (G_UNLIKELY (is_taken))
     {
-        g_set_error (_error, MOLT_ERROR, 1, "stdin can only be taken once\n");
+        g_set_error (_error, MOLT_ERROR, 1, "stdin can only be taken once");
         return FALSE;
     }
     
@@ -375,6 +375,7 @@ static option_t options[] = {
     { OPT_PROCESS_FULLNAME,     "process-fullname" },
     { OPT_OUTPUT_FULLNAME,      "output-fullname" },
     { OPT_ALLOW_PATH,           "allow-path" },
+    { OPT_FROM_STDIN,           "from-stdin" },
 };
 static gint nb_options = sizeof (options) / sizeof (options[0]);
 
@@ -572,14 +573,15 @@ free_commands (GSList *commands)
 }
 
 static void
-add_action_for_file (gchar *file, GFileTest test_types, guint *cur,
+add_action_for_file (gchar *file, GFileTest test_types,
                      GSList *commands, GSList **actions_list)
 {
-    GError    *local_err = NULL;
-    action_t  *action;
-    command_t *command;
-    gchar     *new_name;
-    GSList    *l;
+    GError      *local_err = NULL;
+    static guint cur = 0;
+    action_t    *action;
+    command_t   *command;
+    gchar       *new_name;
+    GSList      *l;
     
     if (!g_file_test (file, G_FILE_TEST_EXISTS))
     {
@@ -614,14 +616,14 @@ add_action_for_file (gchar *file, GFileTest test_types, guint *cur,
     
     /* create new action */
     action = g_slice_new0 (action_t);
-    action->cur = ++*cur;
+    action->cur = ++cur;
     set_full_file_name (file, &(action->file), &(action->filename));
     /* make sure there isn't already an action for this file */
     if (g_hash_table_lookup (actions, (gpointer) action->file))
     {
         debug (LEVEL_DEBUG, "already an action for this file, aborting\n");
         free_action (action);
-        --*cur;
+        --cur;
         return;
     }
     /* put in the new name a copy of the current one. this will be free-d
@@ -748,10 +750,10 @@ main (int argc, char **argv)
     gboolean       dry_run           = FALSE;
     output_t       output            = OUTPUT_STANDARD;
     gboolean       only_rules        = FALSE;
+    gboolean       from_stdin        = FALSE;
     
     GSList        *actions_list      = NULL;
     action_t      *action;
-    guint          cur;
     GSList        *l;
     
     /* try to get debug option now so it applies to loading rules as well.
@@ -930,6 +932,9 @@ main (int argc, char **argv)
                     debug (LEVEL_DEBUG, "implied option --output-fullname\n");
                     output_fullname = TRUE;
                     break;
+                case OPT_FROM_STDIN:
+                    from_stdin = TRUE;
+                    break;
             }
         }
         else
@@ -1048,10 +1053,53 @@ main (int argc, char **argv)
         error_out (TRUE);
     }
     
-    debug (LEVEL_DEBUG, "process file names, i=%d\n", argi);
-    for (cur = 0; argi < argc; ++argi)
+    if (from_stdin)
     {
-        add_action_for_file (argv[argi], test_types, &cur, commands, &actions_list);
+        FILE  *stream;
+        char   buf[4096];
+        size_t len;
+        
+        debug (LEVEL_DEBUG, "process file names from stdin\n");
+        
+        /* there mustn't be anything else on command-line */
+        if (argi < argc)
+        {
+            for (; argi < argc; ++argi)
+            {
+                error (ERROR_SYNTAX, "invalid argument: %s\n", argv[argi]);
+            }
+            error_out (TRUE);
+        }
+        
+        if (!get_stdin ((gpointer *) &stream, &local_err))
+        {
+            error (ERROR_NONE, "unable to get stdin: %s\n", local_err->message);
+            g_clear_error (&local_err);
+            error_out (TRUE);
+        }
+        
+        while (fgets ((char *)&buf, 4096, stream))
+        {
+            /* reading from stdin, filenames might end with a \n to strip */
+            len = strlen (buf);
+            if (buf[len - 1] == '\n')
+            {
+                --len;
+                buf[len] = '\0';
+            }
+            if (len > 0)
+            {
+                add_action_for_file (buf, test_types, commands, &actions_list);
+            }
+        }
+    }
+    else
+    {
+        debug (LEVEL_DEBUG, "process file names from args, i=%d\n", argi);
+        for ( ; argi < argc; ++argi)
+        {
+            add_action_for_file (argv[argi], test_types, commands, &actions_list);
+        }
     }
     free_commands (commands);
     

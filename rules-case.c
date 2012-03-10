@@ -204,7 +204,7 @@ rule_list_init (gpointer  *data,
     
     if (G_UNLIKELY (!get_stdin (data, &local_err)))
     {
-        g_set_error (error, MOLT_RULE_ERROR, 1, "Unable to get stdin: %s\n",
+        g_set_error (error, MOLT_RULE_ERROR, 1, "Unable to get stdin: %s",
                      local_err->message);
         g_clear_error (&local_err);
         return FALSE;
@@ -292,7 +292,7 @@ rule_regex_init (gpointer  *data,
     if (local_err)
     {
         g_set_error (error, MOLT_RULE_ERROR, 1,
-                     "Unable to compile regex: %s\n", local_err->message);
+                     "Unable to compile regex: %s", local_err->message);
         g_clear_error (&local_err);
         return FALSE;
     }
@@ -300,7 +300,7 @@ rule_regex_init (gpointer  *data,
     if (!g_regex_check_replacement (replacement, NULL, &local_err))
     {
         g_set_error (error, MOLT_RULE_ERROR, 1,
-                     "Invalid replacement: %s\n", local_err->message);
+                     "Invalid replacement: %s", local_err->message);
         g_clear_error (&local_err);
         g_regex_unref (regex);
         return FALSE;
@@ -335,7 +335,7 @@ rule_regex (gpointer    *data,
     if (local_err)
     {
         g_set_error (error, MOLT_RULE_ERROR, 1,
-                     "Failed to process regex: %s\n", local_err->message);
+                     "Failed to process regex: %s", local_err->message);
         g_clear_error (&local_err);
         return FALSE;
     }
