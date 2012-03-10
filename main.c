@@ -693,10 +693,24 @@ add_action_for_file (gchar *file, GFileTest test_types,
         else
         {
             /* set the fullname and pointer to the filename */
-            new_name = action->new_name;
-            /* will determine whether it's a full path or not, and if not
-             * prefix with the curdir.
-             * This also removes ./ and "resolves" ../ to get a "real" path */
+            if (action->new_name[0] == '/')
+            {
+                new_name = action->new_name;
+            }
+            else
+            {
+                gchar *s;
+                /* because the action isn't necessarily for one in curdir, we
+                 * need to prefix it with its own path.
+                 * action->filename is a pointer to the first char of the
+                 * filename inside action->file, so we turn the / before into
+                 * a NULL to get the path, and then restore it. */
+                s = action->filename - 1;
+                *s = '\0';
+                new_name = g_strconcat (action->file, "/", action->new_name, NULL);
+                *s = '/';
+                g_free (action->new_name);
+            }
             set_full_file_name (new_name, &(action->new_name), &(action->new_filename));
             g_free (new_name);
             
