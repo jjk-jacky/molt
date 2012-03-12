@@ -36,8 +36,8 @@ typedef struct {
 /* different type of output */
 typedef enum {
 	OUTPUT_STANDARD = 0,	/* regular stuff */
-	OUTPUT_NEW_NAMES,		/* list of (new) names */
 	OUTPUT_BOTH_NAMES,		/* list of old & new names */
+	OUTPUT_NEW_NAMES,		/* list of (new) names */
 } output_t;
 
 static void free_memory (void);

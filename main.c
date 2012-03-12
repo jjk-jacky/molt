@@ -16,20 +16,22 @@
 #include "internal.h"
 #include "main.h"
 /* rules */
-#include "rules-case.h"
+#include "rules.h"
+/* variables */
+#include "variables.h"
 
 /* verbose/debug level */
-static level_t     level        = 0;
+static level_t     level            = 0;
 /* return/error code */
-static error_t     err          = ERROR_NONE;
+static error_t     err              = ERROR_NONE;
 /* list of error messages */
-static GSList     *errors       = NULL;
+static GSList     *errors           = NULL;
 /* list of modules, to be unloaded at the end */
-static GSList     *modules      = NULL;
+static GSList     *modules          = NULL;
 /* list of rules (rule_def_t) */
-static GHashTable *rules        = NULL;
+static GHashTable *rules            = NULL;
 /* list of actions to process (not static for use in actions.c ) */
-GHashTable        *actions      = NULL;
+GHashTable        *actions          = NULL;
 /* list of taken new names: that is, when an action wants to take a (new) name
  * it will be added to this list (whether it is to-rename or conflict-FS, as the
  * later could be resolved later on) unless there's already one, in which case
@@ -37,20 +39,26 @@ GHashTable        *actions      = NULL;
  * We don't keep track of all actions wanting to take that new name, but only
  * whether or not there's (already) one, to detect conflicts. 
  * (not static for use in actions.c ) */
-GHashTable        *new_names    = NULL;
+GHashTable        *new_names        = NULL;
 /* number of conflicts (standard & FS) (not static for use in actions.c ) */
-gint               nb_conflicts = 0;
+gint               nb_conflicts     = 0;
 /* number of actions requiring two-steps renaming jobs (not static for use in actions.c ) */
-gint               nb_two_steps = 0;
+gint               nb_two_steps     = 0;
 /* current pathname */
-static gchar      *curdir       = NULL;
+static gchar      *curdir           = NULL;
 /* whether rules are given the full path/filename (or just filename) */
 static gboolean    process_fullname = FALSE;
 /* whether output shows the full path/filename (or just filename) */
-static gboolean    output_fullname = FALSE;
+static gboolean    output_fullname  = FALSE;
 /* whether rules can give a new name with slashes or not */
 /* Note: only if process_fullname == FALSE obviously */
-static gboolean    allow_path = FALSE;
+static gboolean    allow_path       = FALSE;
+/* list of supported variables */
+static GHashTable   *variables      = NULL;
+/* cached values for per-file variables */
+static GHashTable   *var_per_file   = NULL;
+/* cached values for global variables */
+static GHashTable   *var_global     = NULL;
 
 void
 debug (level_t lvl, const gchar *fmt, ...)
@@ -162,6 +170,37 @@ free_rule (rule_def_t *rule)
 {
     debug (LEVEL_VERBOSE, "free-ing rule %s\n", rule->name);
     g_slice_free (rule_def_t, rule);
+}
+
+gboolean
+add_var (var_def_t *variable)
+{
+    var_def_t *new_variable;
+    
+    /* make sure there isn't already a variable with that name */
+    if (G_UNLIKELY (g_hash_table_lookup (variables, variable->name)))
+    {
+        debug (LEVEL_DEBUG, "cannot add variable %s: already one\n", variable->name);
+        return FALSE;
+    }
+    
+    /* create our own copy of the var_def_t */
+    new_variable = g_slice_new (var_def_t);
+    memcpy (new_variable, variable, sizeof (var_def_t));
+    /* and store it in our hashmap of variables */
+    g_hash_table_insert (variables,
+                         (gpointer) new_variable->name,
+                         (gpointer) new_variable);
+    
+    debug (LEVEL_DEBUG, "added variable %s\n", new_variable->name);
+    return TRUE;
+}
+
+static void
+free_variable (var_def_t *variable)
+{
+    debug (LEVEL_VERBOSE, "free-ing variable %s\n", variable->name);
+    g_slice_free (var_def_t, variable);
 }
 
 static void
@@ -286,6 +325,46 @@ split_params (gchar *arg, GPtrArray **params)
 }
 
 static void
+free_modules (void)
+{
+    GSList *l;
+    destroy_fn destroy;
+
+    debug (LEVEL_DEBUG, "closing modules\n");
+    for (l = modules; l; l = l->next)
+    {
+        GModule *module = l->data;
+
+        debug (LEVEL_VERBOSE, "getting symbol destroy\n");
+        if (G_UNLIKELY (!g_module_symbol (module, "destroy", (gpointer *) &destroy)))
+        {
+            debug (LEVEL_DEBUG, "symbol destroy not found: %s\n",
+                   g_module_error ());
+        }
+        else
+        {
+            debug (LEVEL_VERBOSE, "destroy found: %p\n", destroy);
+            if (G_UNLIKELY (destroy == NULL))
+            {
+                debug (LEVEL_DEBUG, "symbol destroy is NULL: %s\n",
+                       g_module_error ());
+            }
+            else
+            {
+                destroy ();
+            }
+        }
+
+        debug (LEVEL_VERBOSE, "closing module %p\n", module);
+        if (G_UNLIKELY (!g_module_close (module)))
+        {
+            debug (LEVEL_DEBUG, "unable to close module: %s", g_module_error());
+        }
+    }
+    g_slist_free (modules);
+    modules = NULL;
+}
+static void
 free_memory (void)
 {
     GSList *l;
@@ -320,46 +399,224 @@ free_memory (void)
     
     if (modules)
     {
-        destroy_fn destroy;
-        
-        debug (LEVEL_DEBUG, "closing modules\n");
-        for (l = modules; l; l = l->next)
-        {
-            GModule *module = l->data;
-            
-            debug (LEVEL_VERBOSE, "getting symbol destroy\n");
-            if (G_UNLIKELY (!g_module_symbol (module, "destroy", (gpointer *) &destroy)))
-            {
-                debug (LEVEL_DEBUG, "symbol destroy not found: %s\n",
-                       g_module_error ());
-            }
-            else
-            {
-                debug (LEVEL_VERBOSE, "destroy found: %p\n", destroy);
-                if (G_UNLIKELY (destroy == NULL))
-                {
-                    debug (LEVEL_DEBUG, "symbol destroy is NULL: %s\n",
-                           g_module_error ());
-                }
-                else
-                {
-                    destroy ();
-                }
-            }
-            
-            debug (LEVEL_VERBOSE, "closing module %p\n", module);
-            if (G_UNLIKELY (!g_module_close (module)))
-            {
-                debug (LEVEL_DEBUG, "unable to close module: %s", g_module_error());
-            }
-        }
-        g_slist_free (modules);
+        free_modules ();
     }
     
     if (curdir)
     {
         free (curdir);
     }
+}
+
+gboolean
+add_var_value (const gchar *name, gchar *params, gchar *value)
+{
+    var_def_t *variable;
+    gchar *s, *ss;
+    size_t l1, l2;
+    
+    variable = g_hash_table_lookup (variables, (gpointer) name);
+    if (!variable)
+    {
+        return FALSE;
+    }
+    
+    l1 = strlen (name);
+    l2 = strlen (params);
+    ss = s = g_malloc ((l1 + l2 + 2) * sizeof (*s));
+    memcpy (ss, name, l1);
+    ss += l1;
+    *ss++ = '/';
+    memcpy (ss, params, l2);
+    ss += l2;
+    *ss = '\0';
+    
+    if (variable->type == VAR_TYPE_PER_FILE)
+    {
+        g_hash_table_insert (var_per_file, (gpointer) s, (gpointer) g_strdup (value));
+    }
+    else
+    {
+        g_hash_table_insert (var_global, (gpointer) s, (gpointer) g_strdup (value));
+    }
+    
+    return TRUE;
+}
+
+static gchar *
+get_var_value (action_t *action, gchar var[255], guint len, GError **_error)
+{
+    GError     *local_err = NULL;
+    gchar      *params;
+    gchar      *value;
+    var_def_t  *variable;
+    GPtrArray  *arr = NULL;
+    
+    /* any params? */
+    params = strchr (var, '/');
+    if (!params)
+    {
+        params = &(var[len]);
+        /* no params, we add a slash for the key of cached values */
+        var[len++] = '/';
+        var[len] = '\0';
+    }
+
+    /* do we have the value cached? */
+    value = g_hash_table_lookup (var_per_file, (gpointer) var);
+    if (value)
+    {
+        return value;
+    }
+    value = g_hash_table_lookup (var_global, (gpointer) var);
+    if (value)
+    {
+        return value;
+    }
+    
+    /* we only need the variable's name */
+    *params = '\0';
+    ++params;
+    /* make sure such a variable exists then */
+    variable = g_hash_table_lookup (variables, (gpointer) var);
+    if (!variable)
+    {
+        g_set_error (_error, MOLT_ERROR, 1, "unknown variable %s", var);
+        return NULL;
+    }
+    /* params? */
+    if (*params)
+    {
+        if (variable->param == PARAM_SPLIT)
+        {
+            split_params (params, &arr);
+        }
+        else
+        {
+            arr = g_ptr_array_new ();
+            g_ptr_array_add (arr, (gpointer) params);
+        }
+    }
+    /* ask for the value */
+    value = variable->ask (var, action->file, arr, &local_err);
+    if (arr)
+    {
+        g_ptr_array_free (arr, TRUE);
+    }
+    if (G_UNLIKELY (local_err))
+    {
+        g_set_error (_error, MOLT_ERROR, 1,
+                     "unable to get value for variable %s: %s",
+                     var, local_err->message);
+        g_clear_error (&local_err);
+        return NULL;
+    }
+    /* store it in the cache */
+    add_var_value (var, params, value);
+    return value;
+}
+
+static gboolean
+parse_variables (action_t *action, gchar **new_name, GError **_error)
+{
+    GError      *local_err  = NULL;
+    gchar       *s, *ss;
+    gchar       *old;
+    gchar       *name;
+    size_t       l;
+    size_t       len;
+    size_t       alloc;
+    gchar       *start      = NULL;
+    gchar       *last;
+    guint        i;
+    gchar        buf[255];
+    gchar       *value;
+    
+    /* make a copy of the new name, so we can modify it */
+    old = g_strdup (action->new_name);
+    
+    /* init new name */
+    len = 0;
+    alloc = strlen (old) + 1024;
+    name = g_malloc (alloc * sizeof (*name));
+    
+#define add_str(string) do {                                    \
+        /* length of string to add */                           \
+        l = strlen (string);                                    \
+        /* realloc if needed */                                 \
+        if (len + l >= alloc)                                   \
+        {                                                       \
+            alloc += l + 1024;                                  \
+            name = g_realloc (name, alloc * sizeof (*name));    \
+        }                                                       \
+        /* add it */                                            \
+        memcpy ((void *) &(name[len]), string, len);               \
+        len += l;                                               \
+    } while (0)
+    
+    for (s = last = old; *s; ++s)
+    {
+        /* found a variable marker? (must not be escaped) */
+        if (*s == '%')
+        {
+            /* make sure it's not escaped */
+            for (i = 1, ss = s - 1; ss >= old && *ss == '\\'; --ss, ++i)
+                ;
+            if (!(i % 2))
+            {
+                /* it's escaped, moving on */
+                continue;
+            }
+            
+            /* is it the start? */
+            if (start == NULL)
+            {
+                start = s + 1;
+            }
+            /* ignore case of a %% */
+            else if (s == start)
+            {
+                start = NULL;
+            }
+            /* then it's the end, and we can process it */
+            else
+            {
+                /* we "end" the string here */
+                *s = '\0';
+                /* so start points to the variable name [and params] */
+                i = (guint) snprintf (buf, 255, "%s", start);
+                
+                /* get the value (handles params, cache, etc) */
+                value = get_var_value (action, buf, i, &local_err);
+                if (G_UNLIKELY (local_err))
+                {
+                    g_propagate_error (_error, local_err);
+                    g_free (old);
+                    g_free (name);
+                    return FALSE;
+                }
+                
+                /* replace the opening marked with a NULL, so we can add the
+                 * string up to said marker */
+                *(start - 1) = '\0';
+                add_str (last);
+                /* and add the value */
+                add_str (value);
+                
+                /* reset */
+                start = NULL;
+                /* next */
+                last = s + 1;
+            }
+        }
+    }
+    add_str (last);
+    name[len] = '\0';
+    
+#undef add_str
+    
+    *new_name = name;
+    return TRUE;
 }
 
 static option_t options[] = {
@@ -582,6 +839,7 @@ add_action_for_file (gchar *file, GFileTest test_types,
     command_t   *command;
     gchar       *new_name;
     GSList      *l;
+    gboolean     has_parsed_variables = FALSE;
     
     if (!g_file_test (file, G_FILE_TEST_EXISTS))
     {
@@ -650,6 +908,29 @@ add_action_for_file (gchar *file, GFileTest test_types,
                 action->new_name = new_name;
                 new_name = NULL;
             }
+            /* should we parse variables? */
+            if (command->rule->parse_variables)
+            {
+                debug (LEVEL_DEBUG, "parsing variables\n");
+                has_parsed_variables = TRUE;
+                if (G_LIKELY (parse_variables (action, &new_name, &local_err)))
+                {
+                    debug (LEVEL_VERBOSE, "new name: %s\n", new_name);
+                    g_free (action->new_name);
+                    action->new_name = new_name;
+                    new_name = NULL;
+                }
+                else
+                {
+                    error (ERROR_RULE_FAILED, "%s: failed to parse variables: %s\n",
+                           action->file, local_err->message);
+                    g_clear_error (&local_err);
+                    /* we can't continue processing this action now */
+                    g_free (action->new_name);
+                    action->new_name = NULL;
+                    break;
+                }
+            }
         }
         else
         {
@@ -663,6 +944,11 @@ add_action_for_file (gchar *file, GFileTest test_types,
         }
     }
     debug (LEVEL_DEBUG, "all commands applied\n");
+    if (has_parsed_variables)
+    {
+        /* clear cache of per-file values */
+        g_hash_table_destroy (var_per_file);
+    }
     /* check whether we actually have a new name or not */
     if (g_strcmp0 (action->new_name,
                    (process_fullname) ? action->file : action->filename) != 0)
@@ -756,6 +1042,7 @@ main (int argc, char **argv)
     command_t     *command;
     GPtrArray     *ptr_arr;
     guint          i;
+    gboolean       do_parse_variables = FALSE;
     
     gchar         *option;
     GFileTest      test_types = G_FILE_TEST_IS_REGULAR | G_FILE_TEST_IS_DIR
@@ -795,6 +1082,7 @@ main (int argc, char **argv)
     rule->init = NULL;
     rule->run = rule_to_lower;
     rule->destroy = NULL;
+    rule->parse_variables = FALSE;
     add_rule (rule);
     
     rule->name = "upper";
@@ -803,6 +1091,7 @@ main (int argc, char **argv)
     rule->init = NULL;
     rule->run = rule_to_upper;
     rule->destroy = NULL;
+    rule->parse_variables = FALSE;
     add_rule (rule);
     
     rule->name = "camel";
@@ -811,6 +1100,7 @@ main (int argc, char **argv)
     rule->init = NULL;
     rule->run = rule_camel;
     rule->destroy = NULL;
+    rule->parse_variables = FALSE;
     add_rule (rule);
     
     rule->name = "sr";
@@ -819,6 +1109,7 @@ main (int argc, char **argv)
     rule->init = rule_sr_init;
     rule->run = (rule_run_fn) rule_sr;
     rule->destroy = rule_sr_destroy;
+    rule->parse_variables = FALSE;
     add_rule (rule);
     
     rule->name = "list";
@@ -827,6 +1118,7 @@ main (int argc, char **argv)
     rule->init = rule_list_init;
     rule->run = rule_list;
     rule->destroy = NULL;
+    rule->parse_variables = FALSE;
     add_rule (rule);
     
     rule->name = "regex";
@@ -835,6 +1127,7 @@ main (int argc, char **argv)
     rule->init = rule_regex_init;
     rule->run = rule_regex;
     rule->destroy = rule_regex_destroy;
+    rule->parse_variables = FALSE;
     add_rule (rule);
     
     g_free (rule);
@@ -1017,6 +1310,10 @@ main (int argc, char **argv)
             if (command)
             {
                 commands = g_slist_append (commands, command);
+                if (command->rule->parse_variables)
+                {
+                    do_parse_variables = TRUE;
+                }
             }
             
             ++argi;
@@ -1065,6 +1362,64 @@ main (int argc, char **argv)
         error (ERROR_NONE, "Unable to get current path\n");
         /* this is an error we can't ignore */
         error_out (TRUE);
+    }
+    
+    /* do we need variables? */
+    if (do_parse_variables)
+    {
+        init_vars_fn init_vars;
+        var_def_t   *variable;
+        
+        /* create hashmap of variables */
+        variables = g_hash_table_new_full (g_str_hash, g_str_equal, NULL,
+                                           (GDestroyNotify) free_variable);
+
+        /* create hashmap of cached values for per-file variables */
+        var_per_file = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                              (GDestroyNotify) g_free,
+                                              (GDestroyNotify) g_free);
+
+        /* create hashmap of cached values for global variables */
+        var_global = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                            (GDestroyNotify) g_free,
+                                            (GDestroyNotify) g_free);
+        
+        debug (LEVEL_DEBUG, "loading internal variables\n");
+        variable = g_malloc0 (sizeof (*variable));
+        
+        variable->name = "NB";
+        variable->type = VAR_TYPE_PER_FILE;
+        variable->param = PARAM_NONE;
+        variable->ask = var_ask_nb;
+        add_var (variable);
+        
+        g_free (variable);
+        
+        debug (LEVEL_DEBUG, "loading variables from modules\n");
+        for (l = modules; l; l = l->next)
+        {
+            module = l->data;
+            
+            debug (LEVEL_VERBOSE, "getting symbol init_vars\n");
+            if (G_UNLIKELY (!g_module_symbol (module, "init_vars",
+                                              (gpointer *) &init_vars)))
+            {
+                debug (LEVEL_DEBUG, "skip module: symbol init_vars not found: %s\n",
+                       g_module_error ());
+                continue;
+            }
+            
+            debug (LEVEL_VERBOSE, "init_vars found: %p\n", init_vars);
+            if (G_UNLIKELY (init_vars == NULL))
+            {
+                debug (LEVEL_DEBUG, "skip module: symbol init_vars is NULL: %s\n",
+                       g_module_error ());
+                continue;
+            }
+            
+            debug (LEVEL_VERBOSE, "call module's init_vars function\n");
+            init_vars ();
+        }
     }
     
     if (from_stdin)
@@ -1116,6 +1471,14 @@ main (int argc, char **argv)
         }
     }
     free_commands (commands);
+    if (do_parse_variables)
+    {
+        /* clear cache of global values */
+        g_hash_table_destroy (var_global);
+        /* we're done with variables */
+        g_hash_table_destroy (variables);
+    }
+    free_modules ();
     
     /* show errors if any, exit unless continue-on-error is set */
     if (errors)

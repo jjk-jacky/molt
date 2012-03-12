@@ -7,7 +7,7 @@
 #include <stdio.h>
 
 /* molt */
-#include "rules-case.h"
+#include "rules.h"
 
 gboolean
 rule_to_lower (gpointer    *data,

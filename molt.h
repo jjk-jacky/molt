@@ -35,6 +35,7 @@ typedef struct {
     rule_init_fn    init;
     rule_run_fn     run;
     rule_destroy_fn destroy;
+    gboolean        parse_variables;
 } rule_def_t;
 
 /* function called by molt so rules can be added */
@@ -42,6 +43,27 @@ typedef void (*init_fn) (void);
 
 /* function called by molt when terminating to e.g. clean up memory */
 typedef void (*destroy_fn) (void);
+
+typedef enum {
+    VAR_TYPE_GLOBAL = 0,
+    VAR_TYPE_PER_FILE
+} var_type_t;
+
+/* function called by molt to ask value of a variable */
+typedef gchar * (*var_ask_fn) (const gchar *name,
+                               const gchar *file,
+                               GPtrArray   *params,
+                               GError **error);
+
+typedef struct {
+    const gchar *name;
+    var_type_t   type;
+    param_t      param;
+    var_ask_fn   ask;
+} var_def_t;
+
+/* function called by molt so variables can be added */
+typedef void (*init_vars_fn) (void);
 
 typedef enum {
 	LEVEL_DEBUG = 1,
@@ -53,6 +75,10 @@ void debug (level_t lvl, const gchar *fmt, ...);
 gboolean get_stdin (gpointer *stream, GError **error);
 
 gboolean add_rule (rule_def_t *rule);
+
+gboolean add_var (var_def_t *variable);
+
+gboolean add_var_value (const gchar *name, gchar *params, gchar *value);
 
 #ifdef	__cplusplus
 }

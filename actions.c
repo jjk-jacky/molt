@@ -3,8 +3,8 @@
 #include <glib-2.0/glib.h>
 
 /* molt */
-#include "molt.h"
 #include "internal.h"
+#include "molt.h"
 
 extern GHashTable *actions;
 extern GHashTable *new_names;
