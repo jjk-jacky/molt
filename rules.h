@@ -68,7 +68,11 @@ rule_regex (gpointer    *data,
             gchar      **new_name,
             GError     **error);
 
-
+gboolean
+rule_variables (gpointer    *data,
+                const gchar *name,
+                gchar      **new_name,
+                GError     **error);
 
 #ifdef	__cplusplus
 }

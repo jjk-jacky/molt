@@ -8,13 +8,10 @@
 #include "variables.h"
 
 gchar *
-var_ask_nb (const gchar *name, const gchar *file, gpointer params, GError **error)
+var_ask_nb (const gchar *name, const gchar *file, GPtrArray *params, GError **error)
 {
     static const gchar *last_file = NULL;
     static guint        cnt = 0;
-    
-    g_return_val_if_fail (name[0] == 'N' && name[1] == 'B' && name[2] == '\0',
-                          NULL);
     
     /* if it's a new file, we increment the counter */
     if (last_file != file)

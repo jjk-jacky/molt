@@ -469,16 +469,20 @@ get_var_value (action_t *action, gchar var[255], guint len, GError **_error)
         var[len++] = '/';
         var[len] = '\0';
     }
+    
+    debug (LEVEL_VERBOSE, "looking up caches for: %s\n", var);
 
     /* do we have the value cached? */
     value = g_hash_table_lookup (var_per_file, (gpointer) var);
     if (value)
     {
+        debug (LEVEL_VERBOSE, "found: %s\n", value);
         return value;
     }
     value = g_hash_table_lookup (var_global, (gpointer) var);
     if (value)
     {
+        debug (LEVEL_VERBOSE, "found: %s\n", value);
         return value;
     }
     
@@ -486,6 +490,7 @@ get_var_value (action_t *action, gchar var[255], guint len, GError **_error)
     *params = '\0';
     ++params;
     /* make sure such a variable exists then */
+    debug (LEVEL_VERBOSE, "nothing cached, need definition for: %s\n", var);
     variable = g_hash_table_lookup (variables, (gpointer) var);
     if (!variable)
     {
@@ -506,6 +511,8 @@ get_var_value (action_t *action, gchar var[255], guint len, GError **_error)
         }
     }
     /* ask for the value */
+    debug (LEVEL_VERBOSE, "getting value for variable: %s -- params: %s\n",
+           var, params);
     value = variable->ask (var, action->file, arr, &local_err);
     if (arr)
     {
@@ -521,6 +528,7 @@ get_var_value (action_t *action, gchar var[255], guint len, GError **_error)
     }
     /* store it in the cache */
     add_var_value (var, params, value);
+    debug (LEVEL_VERBOSE, "got: %s\n", value);
     return value;
 }
 
@@ -540,6 +548,8 @@ parse_variables (action_t *action, gchar **new_name, GError **_error)
     gchar        buf[255];
     gchar       *value;
     
+    debug (LEVEL_DEBUG, "parsing variables for: %s\n", action->new_name);
+    
     /* make a copy of the new name, so we can modify it */
     old = g_strdup (action->new_name);
     
@@ -558,14 +568,14 @@ parse_variables (action_t *action, gchar **new_name, GError **_error)
             name = g_realloc (name, alloc * sizeof (*name));    \
         }                                                       \
         /* add it */                                            \
-        memcpy ((void *) &(name[len]), string, len);               \
+        memcpy ((void *) &(name[len]), string, l);              \
         len += l;                                               \
     } while (0)
     
     for (s = last = old; *s; ++s)
     {
         /* found a variable marker? (must not be escaped) */
-        if (*s == '%')
+        if (*s == '$')
         {
             /* make sure it's not escaped */
             for (i = 1, ss = s - 1; ss >= old && *ss == '\\'; --ss, ++i)
@@ -593,6 +603,8 @@ parse_variables (action_t *action, gchar **new_name, GError **_error)
                 *s = '\0';
                 /* so start points to the variable name [and params] */
                 i = (guint) snprintf (buf, 255, "%s", start);
+                
+                debug (LEVEL_VERBOSE, "need value for: %s\n", buf);
                 
                 /* get the value (handles params, cache, etc) */
                 value = get_var_value (action, buf, i, &local_err);
@@ -1142,6 +1154,15 @@ main (int argc, char **argv)
     rule->parse_variables = FALSE;
     add_rule (rule);
     
+    rule->name = "variables";
+    rule->param = PARAM_NONE;
+    rule->help = "Parse variables";
+    rule->init = NULL;
+    rule->run = rule_variables;
+    rule->destroy = NULL;
+    rule->parse_variables = TRUE;
+    add_rule (rule);
+    
     g_free (rule);
     
     debug (LEVEL_DEBUG, "loading modules from %s\n", MODULES_PATH);
@@ -1491,6 +1512,7 @@ main (int argc, char **argv)
         g_hash_table_destroy (var_global);
         /* we're done with variables */
         g_hash_table_destroy (variables);
+        variables = NULL;
     }
     free_modules ();
     

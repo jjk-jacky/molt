@@ -342,3 +342,16 @@ rule_regex (gpointer    *data,
     
     return TRUE;
 }
+
+
+gboolean
+rule_variables (gpointer    *data,
+                const gchar *name,
+                gchar      **new_name,
+                GError     **error)
+{
+    /* this rule doesn't actually do anything, it's just a rule with the flag
+     * parse_variables enabled, to do just that. But that is done by molt, and
+     * the rule itself doesn't do anything */
+    return TRUE;
+}
