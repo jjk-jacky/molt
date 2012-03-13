@@ -397,6 +397,14 @@ free_memory (void)
         g_hash_table_destroy (rules);
     }
     
+    if (variables)
+    {
+        debug (LEVEL_DEBUG, "free-ing variables\n");
+        g_hash_table_destroy (variables);
+        g_hash_table_destroy (var_per_file);
+        g_hash_table_destroy (var_global);
+    }
+    
     if (modules)
     {
         free_modules ();
@@ -948,6 +956,10 @@ add_action_for_file (gchar *file, GFileTest test_types,
     {
         /* clear cache of per-file values */
         g_hash_table_destroy (var_per_file);
+        /* recreates an empty hashmap */
+        var_per_file = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                              (GDestroyNotify) g_free,
+                                              (GDestroyNotify) g_free);
     }
     /* check whether we actually have a new name or not */
     if (g_strcmp0 (action->new_name,
@@ -1473,6 +1485,8 @@ main (int argc, char **argv)
     free_commands (commands);
     if (do_parse_variables)
     {
+        /* clear cache of per-file values */
+        g_hash_table_destroy (var_per_file);
         /* clear cache of global values */
         g_hash_table_destroy (var_global);
         /* we're done with variables */
