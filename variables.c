@@ -1,6 +1,6 @@
 
 /* C */
-#include <stdlib.h>
+#include <stdlib.h> /* atoi() */
 
 /* glib */
 #include <glib-2.0/glib.h>
