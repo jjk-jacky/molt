@@ -1,9 +1,11 @@
 
+/* C */
+#include <stdlib.h>
+
 /* glib */
 #include <glib-2.0/glib.h>
 
 /* molt */
-#include "internal.h"
 #include "molt.h"
 #include "variables.h"
 
@@ -12,22 +14,22 @@ var_get_value_nb (const gchar *file, GPtrArray *params, GError **error)
 {
     static const gchar *last_file   = NULL;
     static guint        cnt         = 0;
-    gint                digits      = 0;
-    gint                start       = 1;
-    gint                incr        = 1;
+    guint               digits      = 0;
+    guint               start       = 1;
+    guint               incr        = 1;
     
     if (params)
     {
         if (params->len >= 1)
         {
-            digits = atoi (g_ptr_array_index (params, 0));
+            digits = (guint) atoi (g_ptr_array_index (params, 0));
         }
         if (params->len >= 2)
         {
             /* make sure there is something specified. if not, we keep our default */
             if (((gchar *)(params->pdata[1]))[0] != '\0')
             {
-                start = atoi (g_ptr_array_index (params, 1));
+                start = (guint) atoi (g_ptr_array_index (params, 1));
             }
         }
         if (params->len >= 3)
@@ -35,7 +37,7 @@ var_get_value_nb (const gchar *file, GPtrArray *params, GError **error)
             /* make sure there is something specified. if not, we keep our default */
             if (((gchar *)(params->pdata[2]))[0] != '\0')
             {
-                incr = atoi (g_ptr_array_index (params, 2));
+                incr = (guint) atoi (g_ptr_array_index (params, 2));
             }
         }
     }
