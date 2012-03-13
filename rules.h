@@ -74,6 +74,17 @@ rule_variables (gpointer    *data,
                 gchar      **new_name,
                 GError     **error);
 
+gboolean
+rule_tpl_init (gpointer  *data,
+               GPtrArray *params,
+               GError   **error);
+gboolean
+rule_tpl (gpointer    *data,
+          const gchar *name,
+          gchar      **new_name,
+          GError     **error);
+
+
 #ifdef	__cplusplus
 }
 #endif

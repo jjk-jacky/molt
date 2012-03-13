@@ -50,16 +50,15 @@ typedef enum {
 } var_type_t;
 
 /* function called by molt to ask value of a variable */
-typedef gchar * (*var_ask_fn) (const gchar *name,
-                               const gchar *file,
-                               GPtrArray   *params,
-                               GError **error);
+typedef gchar * (*var_get_value_fn) (const gchar *file,
+                                     GPtrArray   *params,
+                                     GError     **error);
 
 typedef struct {
-    const gchar *name;
-    var_type_t   type;
-    param_t      param;
-    var_ask_fn   ask;
+    const gchar     *name;
+    var_type_t       type;
+    param_t          param;
+    var_get_value_fn get_value;
 } var_def_t;
 
 /* function called by molt so variables can be added */

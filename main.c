@@ -285,7 +285,7 @@ set_full_file_name (gchar *file, gchar **fullname, gchar **filename)
 }
 
 static void
-split_params (gchar *arg, GPtrArray **params)
+split_params (gchar c, gchar *arg, GPtrArray **params)
 {
     gchar *a, *p, *s, *ss;
     gint   i;
@@ -295,7 +295,7 @@ split_params (gchar *arg, GPtrArray **params)
     
     *params = g_ptr_array_new ();
     a = p = arg;
-    while ((s = strchr (a, '/')))
+    while ((s = strchr (a, c)))
     {
         /* make sure it's not escaped */
         for (i = 1, ss = s - 1; ss >= a && *ss == '\\'; --ss, ++i)
@@ -461,12 +461,12 @@ get_var_value (action_t *action, gchar var[255], guint len, GError **_error)
     GPtrArray  *arr = NULL;
     
     /* any params? */
-    params = strchr (var, '/');
+    params = strchr (var, ':');
     if (!params)
     {
         params = &(var[len]);
-        /* no params, we add a slash for the key of cached values */
-        var[len++] = '/';
+        /* no params, we add a : for the key of cached values */
+        var[len++] = ':';
         var[len] = '\0';
     }
     
@@ -502,7 +502,7 @@ get_var_value (action_t *action, gchar var[255], guint len, GError **_error)
     {
         if (variable->param == PARAM_SPLIT)
         {
-            split_params (params, &arr);
+            split_params (':', params, &arr);
         }
         else
         {
@@ -513,7 +513,7 @@ get_var_value (action_t *action, gchar var[255], guint len, GError **_error)
     /* ask for the value */
     debug (LEVEL_VERBOSE, "getting value for variable: %s -- params: %s\n",
            var, params);
-    value = variable->ask (var, action->file, arr, &local_err);
+    value = variable->get_value (action->file, arr, &local_err);
     if (arr)
     {
         g_ptr_array_free (arr, TRUE);
@@ -1154,11 +1154,20 @@ main (int argc, char **argv)
     rule->parse_variables = FALSE;
     add_rule (rule);
     
-    rule->name = "variables";
+    rule->name = "vars";
     rule->param = PARAM_NONE;
     rule->help = "Parse variables";
     rule->init = NULL;
     rule->run = rule_variables;
+    rule->destroy = NULL;
+    rule->parse_variables = TRUE;
+    add_rule (rule);
+    
+    rule->name = "tpl";
+    rule->param = PARAM_NO_SPLIT;
+    rule->help = "Template (parse variables)";
+    rule->init = rule_tpl_init;
+    rule->run = rule_tpl;
     rule->destroy = NULL;
     rule->parse_variables = TRUE;
     add_rule (rule);
@@ -1300,7 +1309,7 @@ main (int argc, char **argv)
             {
                 if (rule->param == PARAM_SPLIT)
                 {
-                    split_params (argv[++argi], &ptr_arr);
+                    split_params ('/', argv[++argi], &ptr_arr);
                 }
                 else if (rule->param == PARAM_NO_SPLIT)
                 {
@@ -1317,7 +1326,7 @@ main (int argc, char **argv)
                     for (i = 0; i < ptr_arr->len; ++i)
                     {
                         debug (LEVEL_VERBOSE, "param#%d: %s\n", i + 1,
-                            g_ptr_array_index (ptr_arr, i));
+                               g_ptr_array_index (ptr_arr, i));
                     }
                 }
                 /* run init */
@@ -1326,7 +1335,7 @@ main (int argc, char **argv)
                                              &local_err)))
                 {
                     error (ERROR_RULE_FAILED, "Unable to initialize rule %s: %s\n",
-                        command->rule->name, local_err->message);
+                           command->rule->name, local_err->message);
                     g_clear_error (&local_err);
                     g_slice_free (command_t, command);
                     command = NULL;
@@ -1422,8 +1431,8 @@ main (int argc, char **argv)
         
         variable->name = "NB";
         variable->type = VAR_TYPE_PER_FILE;
-        variable->param = PARAM_NONE;
-        variable->ask = var_ask_nb;
+        variable->param = PARAM_SPLIT;
+        variable->get_value = var_get_value_nb;
         add_var (variable);
         
         g_free (variable);

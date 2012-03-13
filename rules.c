@@ -355,3 +355,30 @@ rule_variables (gpointer    *data,
      * the rule itself doesn't do anything */
     return TRUE;
 }
+
+
+gboolean
+rule_tpl_init (gpointer  *data,
+               GPtrArray *params,
+               GError   **error)
+{
+    if (!params || params->len != 1)
+    {
+         g_set_error (error, MOLT_RULE_ERROR, 1,
+                      "Template missing");
+        return FALSE;
+    }
+    
+    *data = g_ptr_array_index (params, 0);
+    return TRUE;
+}
+
+gboolean
+rule_tpl (gpointer    *data,
+          const gchar *name,
+          gchar      **new_name,
+          GError     **error)
+{
+    *new_name = g_strdup (*data);
+    return TRUE;
+}

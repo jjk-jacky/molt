@@ -8,17 +8,57 @@
 #include "variables.h"
 
 gchar *
-var_ask_nb (const gchar *name, const gchar *file, GPtrArray *params, GError **error)
+var_get_value_nb (const gchar *file, GPtrArray *params, GError **error)
 {
-    static const gchar *last_file = NULL;
-    static guint        cnt = 0;
+    static const gchar *last_file   = NULL;
+    static guint        cnt         = 0;
+    gint                digits      = 0;
+    gint                start       = 1;
+    gint                incr        = 1;
     
-    /* if it's a new file, we increment the counter */
-    if (last_file != file)
+    if (params)
     {
-        last_file = file;
-        ++cnt;
+        if (params->len >= 1)
+        {
+            digits = atoi (g_ptr_array_index (params, 0));
+        }
+        if (params->len >= 2)
+        {
+            /* make sure there is something specified. if not, we keep our default */
+            if (((gchar *)(params->pdata[1]))[0] != '\0')
+            {
+                start = atoi (g_ptr_array_index (params, 1));
+            }
+        }
+        if (params->len >= 3)
+        {
+            /* make sure there is something specified. if not, we keep our default */
+            if (((gchar *)(params->pdata[2]))[0] != '\0')
+            {
+                incr = atoi (g_ptr_array_index (params, 2));
+            }
+        }
     }
     
-    return g_strdup_printf ("%u", cnt);
+    /* is this the first file? */
+    if (last_file == NULL)
+    {
+        last_file = file;
+        cnt = start;
+    }
+    /* if it's a new file, we increment the counter */
+    else if (last_file != file)
+    {
+        last_file = file;
+        cnt += incr;
+    }
+    
+    if (digits)
+    {
+        return g_strdup_printf ("%0*u", digits, cnt);
+    }
+    else
+    {
+        return g_strdup_printf ("%u", cnt);
+    }
 }

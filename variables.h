@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 gchar *
-var_ask_nb (const gchar *name, const gchar *file, GPtrArray *params, GError **error);
+var_get_value_nb (const gchar *file, GPtrArray *params, GError **error);
 
 
 #ifdef	__cplusplus
