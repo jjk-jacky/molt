@@ -1,4 +1,6 @@
 
+#define IS_MOLT
+
 /* C */
 #include <stdio.h>
 #include <stdlib.h> /* exit */
@@ -8,7 +10,6 @@
 #include <errno.h>
 
 /* glib */
-#include <glib-2.0/glib.h>
 #include <gmodule.h>
 
 /* molt */
@@ -26,8 +27,8 @@ static level_t     level            = 0;
 static error_t     err              = ERROR_NONE;
 /* list of error messages */
 static GSList     *errors           = NULL;
-/* list of modules, to be unloaded at the end */
-static GSList     *modules          = NULL;
+/* list of plugins */
+static GSList     *plugins          = NULL;
 /* list of rules (rule_def_t) */
 static GHashTable *rules            = NULL;
 /* list of actions to process (not static for use in actions.c ) */
@@ -54,11 +55,11 @@ static gboolean    output_fullname  = FALSE;
 /* Note: only if process_fullname == FALSE obviously */
 static gboolean    allow_path       = FALSE;
 /* list of supported variables */
-static GHashTable   *variables      = NULL;
+static GHashTable *variables        = NULL;
 /* cached values for per-file variables */
-static GHashTable   *var_per_file   = NULL;
+static GHashTable *var_per_file     = NULL;
 /* cached values for global variables */
-static GHashTable   *var_global     = NULL;
+static GHashTable *var_global       = NULL;
 
 void
 debug (level_t lvl, const gchar *fmt, ...)
@@ -325,25 +326,26 @@ split_params (gchar c, gchar *arg, GPtrArray **params)
 }
 
 static void
-free_modules (void)
+free_plugins (void)
 {
     GSList *l;
     destroy_fn destroy;
 
-    debug (LEVEL_DEBUG, "closing modules\n");
-    for (l = modules; l; l = l->next)
+    debug (LEVEL_DEBUG, "closing plugins\n");
+    for (l = plugins; l; l = l->next)
     {
-        GModule *module = l->data;
+        plugin_t *plugin = l->data;
+        debug (LEVEL_DEBUG, "closing plugin %s\n", plugin->priv->file);
 
-        debug (LEVEL_VERBOSE, "getting symbol destroy\n");
-        if (G_UNLIKELY (!g_module_symbol (module, "destroy", (gpointer *) &destroy)))
+        debug (LEVEL_VERBOSE, "getting symbol plugin_destroy\n");
+        if (G_UNLIKELY (!g_module_symbol (plugin->priv->module, "plugin_destroy",
+                                          (gpointer *) &destroy)))
         {
             debug (LEVEL_DEBUG, "symbol destroy not found: %s\n",
                    g_module_error ());
         }
         else
         {
-            debug (LEVEL_VERBOSE, "destroy found: %p\n", destroy);
             if (G_UNLIKELY (destroy == NULL))
             {
                 debug (LEVEL_DEBUG, "symbol destroy is NULL: %s\n",
@@ -355,15 +357,21 @@ free_modules (void)
             }
         }
 
-        debug (LEVEL_VERBOSE, "closing module %p\n", module);
-        if (G_UNLIKELY (!g_module_close (module)))
+        debug (LEVEL_VERBOSE, "closing module\n");
+        if (G_UNLIKELY (!g_module_close (plugin->priv->module)))
         {
             debug (LEVEL_DEBUG, "unable to close module: %s", g_module_error());
         }
+        
+        g_free (plugin->priv->file);
+        g_free (plugin->priv);
+        g_free (plugin->info);
+        g_free (plugin);
     }
-    g_slist_free (modules);
-    modules = NULL;
+    g_slist_free (plugins);
+    plugins = NULL;
 }
+
 static void
 free_memory (void)
 {
@@ -405,9 +413,9 @@ free_memory (void)
         g_hash_table_destroy (var_global);
     }
     
-    if (modules)
+    if (plugins)
     {
-        free_modules ();
+        free_plugins ();
     }
     
     if (curdir)
@@ -700,6 +708,18 @@ process_arg (int argc, char *argv[], gint *argi, gchar **option)
                 if (!c)
                 {
                     c = argv[*argi];
+                    /* if first option is -d|d] it's already been processed */
+                    if (*argi == 1)
+                    {
+                        if (*(c + 1) == OPT_DEBUG)
+                        {
+                            ++c;
+                            if (*(c + 1) == OPT_DEBUG)
+                            {
+                                ++c;
+                            }
+                        }
+                    }
                 }
                 for (++c; *c; ++c)
                 {
@@ -896,6 +916,14 @@ add_action_for_file (gchar *file, GFileTest test_types,
     action = g_slice_new0 (action_t);
     action->cur = ++cur;
     set_full_file_name (file, &(action->file), &(action->filename));
+    /* make sure we have a filename */
+    if (*action->filename == '\0')
+    {
+        error (ERROR_SYNTAX, "%s: no filename\n", action->file);
+        free_action (action);
+        --cur;
+        return;
+    }
     /* make sure there isn't already an action for this file */
     if (g_hash_table_lookup (actions, (gpointer) action->file))
     {
@@ -974,8 +1002,8 @@ add_action_for_file (gchar *file, GFileTest test_types,
                                               (GDestroyNotify) g_free);
     }
     /* check whether we actually have a new name or not */
-    if (g_strcmp0 (action->new_name,
-                   (process_fullname) ? action->file : action->filename) != 0)
+    if (action->new_name && g_strcmp0 (action->new_name,
+            (process_fullname) ? action->file : action->filename) != 0)
     {
         /* check validity of new name */
         gboolean is_valid = (strlen (action->new_name) > 0);
@@ -1058,9 +1086,8 @@ main (int argc, char **argv)
     rule_def_t    *rule;
     
     GDir          *dir;
-    const gchar   *file;
-    GModule       *module;
-    init_fn        init;
+    const gchar   *filename;
+    gchar         *file;
     
     GSList        *commands = NULL;
     command_t     *command;
@@ -1083,10 +1110,10 @@ main (int argc, char **argv)
     
     /* try to get debug option now so it applies to loading rules as well.
      * Note: only works if the first option is -d[d] (--debug not supported) */
-    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == 'd')
+    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == OPT_DEBUG)
     {
         ++level;
-        if (argv[1][2] == 'd')
+        if (argv[1][2] == OPT_DEBUG)
         {
             ++level;
         }
@@ -1174,62 +1201,134 @@ main (int argc, char **argv)
     
     g_free (rule);
     
-    debug (LEVEL_DEBUG, "loading modules from %s\n", MODULES_PATH);
-    if (!(dir = g_dir_open (MODULES_PATH, 0, &local_err)))
+#define close_module(free_struct)  do {                             \
+        if (free_struct)                                            \
+        {                                                           \
+            g_free (plugin->info);                                  \
+            g_free (plugin->priv);                                  \
+            g_free (plugin);                                        \
+        }                                                           \
+        if (G_UNLIKELY (!g_module_close (module)))                  \
+        {                                                           \
+            debug (LEVEL_VERBOSE, "unable to close plugin: %s\n",   \
+                    g_module_error ());                             \
+        }                                                           \
+    } while (0)
+    
+#define get_symbol(symbol_name, symbol_fn, free_struct) do {                    \
+        debug (LEVEL_VERBOSE, "getting symbol " symbol_name "\n");              \
+        if (G_UNLIKELY (!g_module_symbol (module, symbol_name,                  \
+                                          (gpointer *) &symbol_fn)))            \
+        {                                                                       \
+            debug (LEVEL_DEBUG, "symbol " symbol_name " not found in %s: %s\n", \
+                   file, g_module_error ());                                    \
+            close_module (free_struct);                                         \
+            continue;                                                           \
+        }                                                                       \
+        if (G_UNLIKELY (symbol_name == NULL))                                   \
+        {                                                                       \
+            debug (LEVEL_DEBUG, "symbol " symbol_name " is NULL in %s: %s\n",   \
+                   file, g_module_error ());                                    \
+            close_module (free_struct);                                         \
+            continue;                                                           \
+        }                                                                       \
+    } while (0)
+    
+    debug (LEVEL_DEBUG, "loading plugins from %s\n", PLUGINS_PATH);
+    if (!(dir = g_dir_open (PLUGINS_PATH, 0, &local_err)))
     {
-        debug (LEVEL_DEBUG, "cannot load modules: unable to open %s: %s\n",
-               MODULES_PATH, local_err->message);
+        debug (LEVEL_DEBUG, "cannot load plugins: unable to open %s: %s\n",
+               PLUGINS_PATH, local_err->message);
         g_clear_error (&local_err);
     }
     else
     {
-        while ((file = g_dir_read_name (dir)))
+        GModule           *module;
+        plugin_t          *plugin, **molt_plugin;
+        gint               req_api;
+        check_version_fn   check_version;
+        init_fn            init;
+        set_info_fn        set_info;
+        plugin_functions_t functions = {
+            &debug,
+            &get_stdin,
+            &add_rule,
+            &add_var,
+            &add_var_value
+        };
+        
+        while ((filename = g_dir_read_name (dir)))
         {
-            debug (LEVEL_VERBOSE, "opening module: %s\n", file);
+            debug (LEVEL_VERBOSE, "opening plugin: %s\n", filename);
+            file = g_strconcat (PLUGINS_PATH, filename, NULL);
             module = g_module_open (file, G_MODULE_BIND_LAZY);
             if (G_UNLIKELY (!module))
             {
-                debug (LEVEL_DEBUG, "cannot open module %s: %s\n",
+                debug (LEVEL_DEBUG, "cannot open plugin %s: %s\n",
                        file, g_module_error ());
                 continue;
             }
             
-            debug (LEVEL_VERBOSE, "getting symbol init\n");
-            if (G_UNLIKELY (!g_module_symbol (module, "init", (gpointer *) &init)))
+            get_symbol ("plugin_check_version", check_version, FALSE);
+            debug (LEVEL_VERBOSE, "call plugin's check_version\n");
+            req_api = check_version (MOLT_ABI_VERSION);
+            if (req_api == -1)
             {
-                debug (LEVEL_DEBUG, "symbol init not found in %s: %s\n",
-                       file, g_module_error ());
-                if (G_UNLIKELY (!g_module_close (module)))
-                {
-                    debug (LEVEL_DEBUG, "unable to close module: %s\n",
-                           g_module_error ());
-                }
+                debug (LEVEL_DEBUG, "plugin requires more recent ABI\n");
+                close_module (FALSE);
                 continue;
             }
-            
-            debug (LEVEL_VERBOSE, "init found: %p\n", init);
-            if (G_UNLIKELY (init == NULL))
+            else if (req_api > MOLT_API_VERSION)
             {
-                debug (LEVEL_DEBUG, "symbol init is NULL in %s: %s\n",
-                       file, g_module_error ());
-                if (G_UNLIKELY (!g_module_close (module)))
-                {
-                    debug (LEVEL_DEBUG, "unable to close module: %s\n",
-                           g_module_error ());
-                }
+                debug (LEVEL_DEBUG, "plugin requires more recent API");
+                close_module (FALSE);
                 continue;
             }
             
-            /* store ref to this module */
-            debug (LEVEL_DEBUG, "adding module %s\n", file);
-            modules = g_slist_prepend (modules, module);
+            /* create the plugin struct */
+            plugin = g_new0 (plugin_t, 1);
+            plugin->info = g_new0 (plugin_info_t, 1);
+            plugin->functions = &functions;
+            plugin->priv = g_new0 (plugin_priv_t, 1);
             
-            debug (LEVEL_VERBOSE, "call module's init function\n");
+            debug (LEVEL_VERBOSE, "getting symbol molt_plugin\n");
+            if (G_UNLIKELY (!g_module_symbol (module, "molt_plugin",
+                                              (gpointer *) &molt_plugin)))
+            {
+                debug (LEVEL_DEBUG, "symbol molt_plugin not found in %s: %s\n",
+                       file, g_module_error ());
+                close_module (TRUE);
+                continue;
+            }
+            if (molt_plugin == NULL)
+            {
+                debug (LEVEL_DEBUG, "symbol molt_plugin is NULL in %s: %s\n",
+                       file, g_module_error ());
+                close_module (TRUE);
+                continue; 
+            }
+            debug (LEVEL_VERBOSE, "setting plugin's molt_plugin\n");
+            *molt_plugin = plugin;
+            
+            get_symbol ("plugin_set_info", set_info, TRUE);
+            debug (LEVEL_VERBOSE, "call plugin's set_info\n");
+            set_info (plugin->info);
+            
+            get_symbol ("plugin_init", init, TRUE);
+            debug (LEVEL_VERBOSE, "call plugin's init\n");
             init ();
+            
+            /* store ref to this plugin */
+            plugin->priv->file = g_strdup (file);
+            plugin->priv->module = module;
+            debug (LEVEL_DEBUG, "adding plugin %s\n", file);
+            plugins = g_slist_prepend (plugins, plugin);
         }
         debug (LEVEL_DEBUG, "closing folder\n");
         g_dir_close (dir);
     }
+#undef get_symbol
+#undef close_module
     
     debug (LEVEL_DEBUG, "process options/rules, i=%d\n", argi);
     while (process_arg (argc, argv, &argi, &option))
@@ -1437,29 +1536,27 @@ main (int argc, char **argv)
         
         g_free (variable);
         
-        debug (LEVEL_DEBUG, "loading variables from modules\n");
-        for (l = modules; l; l = l->next)
+        debug (LEVEL_DEBUG, "loading variables from plugins\n");
+        for (l = plugins; l; l = l->next)
         {
-            module = l->data;
+            plugin_t *plugin = l->data;
             
-            debug (LEVEL_VERBOSE, "getting symbol init_vars\n");
-            if (G_UNLIKELY (!g_module_symbol (module, "init_vars",
+            debug (LEVEL_VERBOSE, "getting symbol plugin_init_vars\n");
+            if (G_UNLIKELY (!g_module_symbol (plugin->priv->module, "plugin_init_vars",
                                               (gpointer *) &init_vars)))
             {
-                debug (LEVEL_DEBUG, "skip module: symbol init_vars not found: %s\n",
+                debug (LEVEL_DEBUG, "skip module: symbol plugin_init_vars not found: %s\n",
                        g_module_error ());
                 continue;
             }
-            
-            debug (LEVEL_VERBOSE, "init_vars found: %p\n", init_vars);
             if (G_UNLIKELY (init_vars == NULL))
             {
-                debug (LEVEL_DEBUG, "skip module: symbol init_vars is NULL: %s\n",
+                debug (LEVEL_DEBUG, "skip module: symbol plugin_init_vars is NULL: %s\n",
                        g_module_error ());
                 continue;
             }
             
-            debug (LEVEL_VERBOSE, "call module's init_vars function\n");
+            debug (LEVEL_VERBOSE, "call plugin's init_vars\n");
             init_vars ();
         }
     }
@@ -1523,7 +1620,7 @@ main (int argc, char **argv)
         g_hash_table_destroy (variables);
         variables = NULL;
     }
-    free_modules ();
+    free_plugins ();
     
     /* show errors if any, exit unless continue-on-error is set */
     if (errors)

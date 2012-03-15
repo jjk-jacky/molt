@@ -40,6 +40,13 @@ typedef struct {
     gchar    *error;
 } action_t;
 
+/* main.c */
+void debug (level_t lvl, const gchar *fmt, ...);
+gboolean get_stdin (gpointer *stream, GError **error);
+gboolean add_rule (rule_def_t *rule);
+gboolean add_var (var_def_t *variable);
+gboolean add_var_value (const gchar *name, gchar *params, gchar *value);
+
 /* actions.c */
 void set_to_rename (action_t *action, action_t *action_for);
 

@@ -6,7 +6,7 @@
 extern "C" {
 #endif
 
-#define MODULES_PATH			"./modules/"
+#define PLUGINS_PATH                "./plugins/"
 
 #define OPT_DEBUG                   'd'
 #define OPT_CONTINUE_ON_ERROR       'C'
@@ -39,6 +39,11 @@ typedef enum {
 	OUTPUT_BOTH_NAMES,		/* list of old & new names */
 	OUTPUT_NEW_NAMES,		/* list of (new) names */
 } output_t;
+
+struct _plugin_priv_t {
+    gchar   *file;
+    GModule *module;
+};
 
 static void free_memory (void);
 
