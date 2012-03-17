@@ -459,6 +459,68 @@ add_var_value (const gchar *name, gchar *params, gchar *value)
     return TRUE;
 }
 
+static inline void
+init_variables (void)
+{
+    init_vars_fn init_vars;
+    var_def_t   *variable;
+    GSList      *l;
+
+    /* create hashmap of variables */
+    variables = g_hash_table_new_full (g_str_hash, g_str_equal, NULL,
+                                        (GDestroyNotify) free_variable);
+
+    /* create hashmap of cached values for per-file variables */
+    var_per_file = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                            (GDestroyNotify) g_free,
+                                            (GDestroyNotify) g_free);
+
+    /* create hashmap of cached values for global variables */
+    var_global = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                        (GDestroyNotify) g_free,
+                                        (GDestroyNotify) g_free);
+
+    debug (LEVEL_DEBUG, "loading internal variables\n");
+    variable = g_malloc0 (sizeof (*variable));
+
+    variable->name = "NB";
+    variable->description = "Counter, incremented for each file using it";
+    variable->help = "You can specify up to 3 parameters:\n"
+        "- the minimum number number of digits (padding with 0's)\n"
+        "- the starting value of the counter\n"
+        "- the increment (can be negative)\n"
+        "E.g: $NB:3:42:-2$ will resolve as 042, 040, 038, etc";
+    variable->type = VAR_TYPE_PER_FILE;
+    variable->param = PARAM_SPLIT;
+    variable->get_value = var_get_value_nb;
+    add_var (variable);
+
+    g_free (variable);
+
+    debug (LEVEL_DEBUG, "loading variables from plugins\n");
+    for (l = plugins; l; l = l->next)
+    {
+        plugin_t *plugin = l->data;
+
+        debug (LEVEL_VERBOSE, "getting symbol plugin_init_vars\n");
+        if (G_UNLIKELY (!g_module_symbol (plugin->priv->module, "plugin_init_vars",
+                                            (gpointer *) &init_vars)))
+        {
+            debug (LEVEL_DEBUG, "skip module: symbol plugin_init_vars not found: %s\n",
+                    g_module_error ());
+            continue;
+        }
+        if (G_UNLIKELY (init_vars == NULL))
+        {
+            debug (LEVEL_DEBUG, "skip module: symbol plugin_init_vars is NULL: %s\n",
+                    g_module_error ());
+            continue;
+        }
+
+        debug (LEVEL_VERBOSE, "call plugin's init_vars\n");
+        init_vars ();
+    }
+}
 static gchar *
 get_var_value (action_t *action, gchar var[255], guint len, GError **_error)
 {
@@ -648,21 +710,183 @@ parse_variables (action_t *action, gchar **new_name, GError **_error)
 }
 
 static option_t options[] = {
-    { OPT_DEBUG,                "debug" },
-    { OPT_CONTINUE_ON_ERROR,    "continue-on-error" },
-    { OPT_DRY_RUN,              "dry-run" },
-    { OPT_EXCLUDE_DIRS,         "exclude-directories" },
-    { OPT_EXCLUDE_FILES,        "exclude-files" },
-    { OPT_EXCLUDE_SYMLINKS,     "exclude-symlinks" },
-    { OPT_OUTPUT_BOTH,          "output-both-names" },
-    { OPT_OUTPUT_NEW,           "output-new-names" },
-    { OPT_ONLY_RULES,           "only-rules" },
-    { OPT_PROCESS_FULLNAME,     "process-fullname" },
-    { OPT_OUTPUT_FULLNAME,      "output-fullname" },
-    { OPT_ALLOW_PATH,           "allow-path" },
-    { OPT_FROM_STDIN,           "from-stdin" },
+    { OPT_DEBUG,                "debug",
+      "Enable debug mode - Specify twice for verbose\noutput" },
+    { OPT_CONTINUE_ON_ERROR,    "continue-on-error",
+      "Process as much as possible, even on errors\nor when conflicts are detected" },
+    { OPT_DRY_RUN,              "dry-run",
+      "Do not rename anything" },
+    { OPT_EXCLUDE_DIRS,         "exclude-directories",
+      "Ignore directories from specified files" },
+    { OPT_EXCLUDE_FILES,        "exclude-files",
+      "Ignore files from specified files" },
+    { OPT_EXCLUDE_SYMLINKS,     "exclude-symlinks",
+      "Ignore symlinks from specified files" },
+    { OPT_OUTPUT_BOTH,          "output-both-names",
+      "Output the old then the new filename for each file" },
+    { OPT_OUTPUT_NEW,           "output-new-names",
+      "Output the new filename for each file" },
+    { OPT_ONLY_RULES,           "only-rules",
+      "Only apply the rules and output results,\nwithout any conflict detection\n"
+      "(Implies --dry-run)" },
+    { OPT_PROCESS_FULLNAME,     "process-fullname",
+      "Send the full path/name to the rules\n(Imply --output-fullname)" },
+    { OPT_OUTPUT_FULLNAME,      "output-fullname",
+      "Output full path/names" },
+    { OPT_ALLOW_PATH,           "allow-path",
+      "Allow (relative/absolute) paths in new filenames\n(Imply --output-fullname)" },
+    { OPT_FROM_STDIN,           "from-stdin",
+      "Get list of files from stdin" },
+    { OPT_HELP,                 "help",
+      "Show this help screen and exit - Specify twice for\nverbose output" },
+    { OPT_VERSION,              "version",
+      "Show version information and exit" },
 };
 static gint nb_options = sizeof (options) / sizeof (options[0]);
+
+#define put_up_to_spaces(nb)    do {    \
+        for (j = nb; j > 0; --j)        \
+        {                               \
+            fputc (' ', stdout);        \
+        }                               \
+    } while (0)
+
+#define put_string(help, nb)  do {        \
+        for (s = help; *s; ++s)         \
+        {                               \
+            fputc (*s, stdout);         \
+            if (*s == '\n')             \
+            {                           \
+                /* auto-add spaces on   \
+                 * new line */          \
+                put_up_to_spaces (nb);  \
+            }                           \
+        }                               \
+        fputc ('\n', stdout);           \
+    } while (0)
+
+#define put_list(types, type, prefix, str_param)   do {                     \
+        g_hash_table_iter_init (&iter, types);                              \
+        while (g_hash_table_iter_next (&iter, NULL, (gpointer *) &type))    \
+        {                                                                   \
+            j = fprintf (stdout, prefix "%s%s", type->name,                 \
+                        (type->param != PARAM_NONE) ? str_param : "");      \
+            put_up_to_spaces (30 - j);                                      \
+            fputs (type->description, stdout);                              \
+            fputc ('\n', stdout);                                           \
+            if (verbose && type->help)                                      \
+            {                                                               \
+                fputs ("   ", stdout);                                      \
+                put_string (type->help, 3);                                   \
+                fputc ('\n', stdout);                                       \
+            }                                                               \
+        }                                                                   \
+    } while (0)
+
+static void
+show_help (gboolean verbose)
+{
+    gint            i, j;
+    option_t        *opt;
+    const gchar     *s;
+    GHashTableIter   iter;
+    rule_def_t      *rule;
+    var_def_t       *variable;
+    
+    fputs ("Renames specified files by applying specified rules\n", stdout);
+    fputs ("Usage: molt [OPTION]... RULE... [FILE]...\n", stdout);
+    fputc ('\n', stdout);
+    
+    fputs ("\tOptions :\n", stdout);
+    for (i = 0; i < nb_options; ++i)
+    {
+        opt = &options[i];
+        j = fprintf (stdout, " -%c, --%s", opt->opt_short, opt->opt_long);
+        put_up_to_spaces (30 - j);
+        put_string (opt->help, 31);
+    }
+    
+    fputs ("\n\tRules :\n", stdout);
+    if (verbose)
+    {
+        fputs ("Rules are the part of molt that process filenames. Rules will be applied\n"
+            "in the order specified, you can use the same rule as may times as you want.\n"
+            "Some rules require a parameter, what it can be depend of the rule. Usually,\n"
+            "it will be a string where you can specify multiple parameter using slash ( / )\n"
+            "as separator.\n", stdout);
+        fputc ('\n', stdout);
+    }
+    put_list (rules, rule, " --", " PARAM");
+    
+    init_variables ();
+    fputs ("\n\tVariables :\n", stdout);
+    if (verbose)
+    {
+        fputs ("You can use variables in the new filenames. The syntax is to put the\n"
+            "variable's name in between dollar signs, e.g: $FOOBAR$\n"
+            "You can also (if supported) specify one (or more) parameters, using colon\n"
+            "as separator, e.g: $FOOBAR:PARAM1:PARAM2$\n"
+            "Variables are not automatically resolved, you need to use the rule --vars\n"
+            "in order to have them resolved, which gives you the ability to determine\n"
+            "when resolving happens, and continue processing with more rules afterwards.\n"
+            "Note that rule --tpl also resolves variables.\n", stdout);
+        fputc ('\n', stdout);
+    }
+    put_list (variables, variable, " ", "[:PARAM...]");
+    
+    exit (0);
+}
+
+#undef put_list
+
+static void
+show_version (void)
+{
+    GSList      *l;
+    gint         j;
+    const gchar *s;
+    plugin_t    *plugin;
+    
+    fputs ("molt [batch renaming utility] version " APP_VERSION "\n", stdout);
+    fputs ("Copyright (C) 2012 Olivier Brunel\n", stdout);
+    fputs ("License GPLv3+: GNU GPL version 3 or later "
+           "<http://gnu.org/licenses/gpl.html>\n", stdout);
+    fputs ("This is free software: you are free to change and redistribute it.\n", stdout);
+    fputs ("There is NO WARRANTY, to the extent permitted by law.\n", stdout);
+    
+    if (plugins)
+    {
+        fputs ("\n\tPlugins :\n", stdout);
+        for (l = plugins; l; l = l->next)
+        {
+            plugin = l->data;
+            fputs ("- ", stdout);
+            fputs (plugin->info->name, stdout);
+            fputs (" [", stdout);
+            if (G_LIKELY (NULL != (s = strrchr (plugin->priv->file, '/'))))
+            {
+                ++s;
+            }
+            else
+            {
+                s = plugin->priv->file;
+            }
+            fputs (s, stdout);
+            fputs ("] version ", stdout);
+            fputs (plugin->info->version, stdout);
+            fputs ("; By ", stdout);
+            fputs (plugin->info->author, stdout);
+            fputc ('\n', stdout);
+            put_string (plugin->info->description, 1);
+            fputc ('\n', stdout);
+        }
+    }
+    
+    exit (0);
+}
+
+#undef put_string
+#undef put_up_to_spaces
 
 static gboolean
 process_arg (int argc, char *argv[], gint *argi, gchar **option)
@@ -1128,8 +1352,9 @@ main (int argc, char **argv)
     rule = g_malloc0 (sizeof (*rule));
     
     rule->name = "lower";
+    rule->description = "Convert to lowercase";
+    rule->help = NULL;
     rule->param = PARAM_NONE;
-    rule->help = "Convert to lowercase";
     rule->init = NULL;
     rule->run = rule_to_lower;
     rule->destroy = NULL;
@@ -1137,8 +1362,9 @@ main (int argc, char **argv)
     add_rule (rule);
     
     rule->name = "upper";
+    rule->description = "Convert to uppercase";
+    rule->help = NULL;
     rule->param = PARAM_NONE;
-    rule->help = "Convert to uppercase";
     rule->init = NULL;
     rule->run = rule_to_upper;
     rule->destroy = NULL;
@@ -1146,8 +1372,9 @@ main (int argc, char **argv)
     add_rule (rule);
     
     rule->name = "camel";
+    rule->description = "Convert to Camel Case";
+    rule->help = NULL;
     rule->param = PARAM_NONE;
-    rule->help = "Convert to Camel Case";
     rule->init = NULL;
     rule->run = rule_camel;
     rule->destroy = NULL;
@@ -1155,8 +1382,11 @@ main (int argc, char **argv)
     add_rule (rule);
     
     rule->name = "sr";
+    rule->description = "Search & replace a string";
+    rule->help = "PARAM = search[/replacement[/option]]\n"
+        "If no replacement is specified, the string will be removed.\n"
+        "Search is case-sensitive, unless option i was specified.";
     rule->param = PARAM_SPLIT;
-    rule->help = "Search & replace";
     rule->init = rule_sr_init;
     rule->run = (rule_run_fn) rule_sr;
     rule->destroy = rule_sr_destroy;
@@ -1164,8 +1394,9 @@ main (int argc, char **argv)
     add_rule (rule);
     
     rule->name = "list";
+    rule->description = "Use list of new names from stdin";
+    rule->help = NULL;
     rule->param = PARAM_NONE;
-    rule->help = "List of new names";
     rule->init = rule_list_init;
     rule->run = rule_list;
     rule->destroy = NULL;
@@ -1173,8 +1404,11 @@ main (int argc, char **argv)
     add_rule (rule);
     
     rule->name = "regex";
+    rule->description = "Search & replace using regular expression";
+    rule->help = "PARAM = pattern[/replacement[/option]]\n"
+        "If no replacement is specified, the string will be removed.\n"
+        "Search is case-sensitive, unless option i was specified.";
     rule->param = PARAM_SPLIT;
-    rule->help = "Regular expression";
     rule->init = rule_regex_init;
     rule->run = rule_regex;
     rule->destroy = rule_regex_destroy;
@@ -1182,8 +1416,9 @@ main (int argc, char **argv)
     add_rule (rule);
     
     rule->name = "vars";
+    rule->description = "Parse variables";
+    rule->help = NULL;
     rule->param = PARAM_NONE;
-    rule->help = "Parse variables";
     rule->init = NULL;
     rule->run = rule_variables;
     rule->destroy = NULL;
@@ -1191,8 +1426,9 @@ main (int argc, char **argv)
     add_rule (rule);
     
     rule->name = "tpl";
+    rule->description = "Apply specified template (parse variables)";
+    rule->help = NULL;
     rule->param = PARAM_NO_SPLIT;
-    rule->help = "Template (parse variables)";
     rule->init = rule_tpl_init;
     rule->run = rule_tpl;
     rule->destroy = NULL;
@@ -1330,6 +1566,8 @@ main (int argc, char **argv)
 #undef get_symbol
 #undef close_module
     
+    gint help = 0;
+    gint version = 0;
     debug (LEVEL_DEBUG, "process options/rules, i=%d\n", argi);
     while (process_arg (argc, argv, &argi, &option))
     {
@@ -1382,6 +1620,12 @@ main (int argc, char **argv)
                     break;
                 case OPT_FROM_STDIN:
                     from_stdin = TRUE;
+                    break;
+                case OPT_HELP:
+                    ++help;
+                    break;
+                case OPT_VERSION:
+                    ++version;
                     break;
             }
         }
@@ -1479,6 +1723,18 @@ main (int argc, char **argv)
         error_out (!continue_on_error || err & (ERROR_RULE_FAILED | ERROR_SYNTAX));
     }
     
+    /* help */
+    if (help)
+    {
+        show_help (help > 1); /* calls exit() */
+    }
+    
+    /* version */
+    if (version)
+    {
+        show_version (); /* calls exit() */
+    }
+    
     /* make sure we have something to do */
     if (!commands)
     {
@@ -1508,57 +1764,7 @@ main (int argc, char **argv)
     /* do we need variables? */
     if (do_parse_variables)
     {
-        init_vars_fn init_vars;
-        var_def_t   *variable;
-        
-        /* create hashmap of variables */
-        variables = g_hash_table_new_full (g_str_hash, g_str_equal, NULL,
-                                           (GDestroyNotify) free_variable);
-
-        /* create hashmap of cached values for per-file variables */
-        var_per_file = g_hash_table_new_full (g_str_hash, g_str_equal,
-                                              (GDestroyNotify) g_free,
-                                              (GDestroyNotify) g_free);
-
-        /* create hashmap of cached values for global variables */
-        var_global = g_hash_table_new_full (g_str_hash, g_str_equal,
-                                            (GDestroyNotify) g_free,
-                                            (GDestroyNotify) g_free);
-        
-        debug (LEVEL_DEBUG, "loading internal variables\n");
-        variable = g_malloc0 (sizeof (*variable));
-        
-        variable->name = "NB";
-        variable->type = VAR_TYPE_PER_FILE;
-        variable->param = PARAM_SPLIT;
-        variable->get_value = var_get_value_nb;
-        add_var (variable);
-        
-        g_free (variable);
-        
-        debug (LEVEL_DEBUG, "loading variables from plugins\n");
-        for (l = plugins; l; l = l->next)
-        {
-            plugin_t *plugin = l->data;
-            
-            debug (LEVEL_VERBOSE, "getting symbol plugin_init_vars\n");
-            if (G_UNLIKELY (!g_module_symbol (plugin->priv->module, "plugin_init_vars",
-                                              (gpointer *) &init_vars)))
-            {
-                debug (LEVEL_DEBUG, "skip module: symbol plugin_init_vars not found: %s\n",
-                       g_module_error ());
-                continue;
-            }
-            if (G_UNLIKELY (init_vars == NULL))
-            {
-                debug (LEVEL_DEBUG, "skip module: symbol plugin_init_vars is NULL: %s\n",
-                       g_module_error ());
-                continue;
-            }
-            
-            debug (LEVEL_VERBOSE, "call plugin's init_vars\n");
-            init_vars ();
-        }
+        init_variables ();
     }
     
     if (from_stdin)

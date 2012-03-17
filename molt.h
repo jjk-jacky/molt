@@ -40,8 +40,9 @@ typedef void (*rule_destroy_fn) (gpointer *data);
 /* definition of a rule */
 typedef struct {
     const gchar    *name;
-    param_t         param;
+    const gchar    *description;
     const gchar    *help;
+    param_t         param;
     rule_init_fn    init;
     rule_run_fn     run;
     rule_destroy_fn destroy;
@@ -60,6 +61,8 @@ typedef gchar * (*var_get_value_fn) (const gchar *file,
 
 typedef struct {
     const gchar     *name;
+    const gchar     *description;
+    const gchar     *help;
     var_type_t       type;
     param_t          param;
     var_get_value_fn get_value;

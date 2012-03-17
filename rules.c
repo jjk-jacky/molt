@@ -8,6 +8,7 @@
 
 /* molt */
 #include "rules.h"
+#include "internal.h"
 
 gboolean
 rule_to_lower (gpointer    *data,
@@ -267,16 +268,29 @@ rule_regex_init (gpointer  *data,
     GRegex              *regex;
     regex_t             *d;
     
-    /* make sure we have a pattern & a replacement */
-    if (!params || params->len < 2)
+    /* make sure we have a pattern */
+    if (!params || params->len < 1)
     {
         g_set_error (error, MOLT_RULE_ERROR, 1,
-                     "Pattern and/or replacement missing");
+                     "Pattern missing");
+        return FALSE;
+    }
+    else if (params->len > 3)
+    {
+        g_set_error (error, MOLT_RULE_ERROR, 1,
+                     "Too many parameters");
         return FALSE;
     }
     
     pattern = g_ptr_array_index (params, 0);
-    replacement = g_ptr_array_index (params, 1);
+    if (params->len >= 2)
+    {
+        replacement = g_ptr_array_index (params, 1);
+    }
+    else
+    {
+        replacement = "";
+    }
     
     flags = G_REGEX_OPTIMIZE;
     if (params->len == 3)

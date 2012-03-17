@@ -6,6 +6,7 @@
 extern "C" {
 #endif
 
+#define APP_VERSION                 "0.0.1"
 #define PLUGINS_PATH                "./plugins/"
 
 #define OPT_DEBUG                   'd'
@@ -21,10 +22,13 @@ extern "C" {
 #define OPT_OUTPUT_FULLNAME         'O'
 #define OPT_ALLOW_PATH              'p'
 #define OPT_FROM_STDIN              'i'
+#define OPT_HELP                    'h'
+#define OPT_VERSION                 'V'
 
 typedef struct {
 	gchar        opt_short;
 	const gchar *opt_long;
+    const gchar *help;
 } option_t;
 
 /* command: rule to run w/ its parameter(s) */
