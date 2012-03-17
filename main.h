@@ -9,19 +9,24 @@ extern "C" {
 #define APP_VERSION                 "0.0.1"
 #define PLUGINS_PATH                "./plugins/"
 
-#define OPT_DEBUG                   'd'
-#define OPT_CONTINUE_ON_ERROR       'C'
-#define OPT_DRY_RUN                 'n'
-#define OPT_EXCLUDE_FILES           'F'
 #define OPT_EXCLUDE_DIRS            'D'
+#define OPT_EXCLUDE_FILES           'F'
 #define OPT_EXCLUDE_SYMLINKS        'S'
+#define OPT_FROM_STDIN              'i'
+
+#define OPT_PROCESS_FULLNAME        'P'
+#define OPT_ALLOW_PATH              'p'
+#define OPT_MAKE_PARENTS            'm'
+
+#define OPT_OUTPUT_FULLNAME         'O'
 #define OPT_OUTPUT_BOTH             'B'
 #define OPT_OUTPUT_NEW              'N'
 #define OPT_ONLY_RULES              'R'
-#define OPT_PROCESS_FULLNAME        'P'
-#define OPT_OUTPUT_FULLNAME         'O'
-#define OPT_ALLOW_PATH              'p'
-#define OPT_FROM_STDIN              'i'
+
+#define OPT_DRY_RUN                 'n'
+#define OPT_CONTINUE_ON_ERROR       'C'
+
+#define OPT_DEBUG                   'd'
 #define OPT_HELP                    'h'
 #define OPT_VERSION                 'V'
 

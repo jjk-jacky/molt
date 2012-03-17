@@ -710,18 +710,24 @@ parse_variables (action_t *action, gchar **new_name, GError **_error)
 }
 
 static option_t options[] = {
-    { OPT_DEBUG,                "debug",
-      "Enable debug mode - Specify twice for verbose\noutput" },
-    { OPT_CONTINUE_ON_ERROR,    "continue-on-error",
-      "Process as much as possible, even on errors\nor when conflicts are detected" },
-    { OPT_DRY_RUN,              "dry-run",
-      "Do not rename anything" },
     { OPT_EXCLUDE_DIRS,         "exclude-directories",
       "Ignore directories from specified files" },
     { OPT_EXCLUDE_FILES,        "exclude-files",
       "Ignore files from specified files" },
     { OPT_EXCLUDE_SYMLINKS,     "exclude-symlinks",
       "Ignore symlinks from specified files" },
+    { OPT_FROM_STDIN,           "from-stdin",
+      "Get list of files from stdin" },
+
+    { OPT_PROCESS_FULLNAME,     "process-fullname",
+      "Send the full path/name to the rules\n(Imply --output-fullname)" },
+    { OPT_ALLOW_PATH,           "allow-path",
+      "Allow (relative/absolute) paths in new filenames\n(Imply --output-fullname)" },
+    { OPT_MAKE_PARENTS,         "make-parents",
+      "Create parents if needed" },
+
+    { OPT_OUTPUT_FULLNAME,      "output-fullname",
+      "Output full path/names" },
     { OPT_OUTPUT_BOTH,          "output-both-names",
       "Output the old then the new filename for each file" },
     { OPT_OUTPUT_NEW,           "output-new-names",
@@ -729,14 +735,14 @@ static option_t options[] = {
     { OPT_ONLY_RULES,           "only-rules",
       "Only apply the rules and output results,\nwithout any conflict detection\n"
       "(Implies --dry-run)" },
-    { OPT_PROCESS_FULLNAME,     "process-fullname",
-      "Send the full path/name to the rules\n(Imply --output-fullname)" },
-    { OPT_OUTPUT_FULLNAME,      "output-fullname",
-      "Output full path/names" },
-    { OPT_ALLOW_PATH,           "allow-path",
-      "Allow (relative/absolute) paths in new filenames\n(Imply --output-fullname)" },
-    { OPT_FROM_STDIN,           "from-stdin",
-      "Get list of files from stdin" },
+
+    { OPT_DRY_RUN,              "dry-run",
+      "Do not rename anything" },
+    { OPT_CONTINUE_ON_ERROR,    "continue-on-error",
+      "Process as much as possible, even on errors\nor when conflicts are detected" },
+
+    { OPT_DEBUG,                "debug",
+      "Enable debug mode - Specify twice for verbose\noutput" },
     { OPT_HELP,                 "help",
       "Show this help screen and exit - Specify twice for\nverbose output" },
     { OPT_VERSION,              "version",
@@ -1063,17 +1069,6 @@ get_tmp_name (const gchar *name)
     return g_strconcat (buf, name, NULL);
 }
 
-#define action_error(...)   do {                        \
-    if (nb_two_steps == 0)                              \
-    {                                                   \
-        fprintf (stderr, __VA_ARGS__);                  \
-    }                                                   \
-    else                                                \
-    {                                                   \
-        action->error = g_strdup_printf (__VA_ARGS__);  \
-    }                                                   \
-} while (0)
-
 static void
 free_commands (GSList *commands)
 {
@@ -1293,15 +1288,6 @@ add_action_for_file (gchar *file, GFileTest test_types,
     *actions_list = g_slist_append (*actions_list, (gpointer) action);
 }
 
-#define do_rename(old_name, new_name)   do {                            \
-        debug (LEVEL_DEBUG, "renaming %s to %s\n", old_name, new_name); \
-        if (G_UNLIKELY (0 != (state = rename (old_name, new_name))))    \
-        {                                                               \
-            action_error ("%s: failed to rename to %s: %s\n",           \
-                        action->file, new_name, strerror (errno));      \
-        }                                                               \
-    } while (0)
-
 int
 main (int argc, char **argv)
 {
@@ -1327,6 +1313,7 @@ main (int argc, char **argv)
     output_t       output            = OUTPUT_STANDARD;
     gboolean       only_rules        = FALSE;
     gboolean       from_stdin        = FALSE;
+    gboolean       make_parents      = FALSE;
     
     GSList        *actions_list      = NULL;
     action_t      *action;
@@ -1627,6 +1614,9 @@ main (int argc, char **argv)
                 case OPT_VERSION:
                     ++version;
                     break;
+                case OPT_MAKE_PARENTS:
+                    make_parents = TRUE;
+                    break;
             }
         }
         else
@@ -1848,6 +1838,38 @@ main (int argc, char **argv)
     gint state;
     gchar *name;
     
+#define action_error(...)   do {                        \
+    if (nb_two_steps == 0)                              \
+    {                                                   \
+        fprintf (stderr, __VA_ARGS__);                  \
+    }                                                   \
+    else                                                \
+    {                                                   \
+        action->error = g_strdup_printf (__VA_ARGS__);  \
+    }                                                   \
+} while (0)
+
+#define do_rename(old_name, new_name)   do {                            \
+        if (make_parents)                                               \
+        {                                                               \
+            gchar *s;                                                   \
+            if (NULL != (s = strrchr (new_name, '/')))                  \
+            {                                                           \
+                *s = '\0';                                              \
+                debug (LEVEL_DEBUG, "ensuring %s exists\n", new_name);  \
+                g_mkdir_with_parents (new_name, 0755);                  \
+                *s = '/';                                               \
+            }                                                           \
+        }                                                               \
+        debug (LEVEL_DEBUG, "renaming %s to %s\n", old_name, new_name); \
+        if (G_UNLIKELY (0 != (state = rename (old_name, new_name))))    \
+        {                                                               \
+            err |= ERROR_RENAME_FAILURE;                                \
+            action_error ("%s: failed to rename to %s: %s\n",           \
+                        action->file, new_name, strerror (errno));      \
+        }                                                               \
+    } while (0)
+    
     /* process actions: rename files & construct output */
     for (l = actions_list; l; l = l->next)
     {
@@ -1974,6 +1996,8 @@ main (int argc, char **argv)
             }
         }
     }
+#undef do_rename
+#undef action_error
     
     if (err)
     {
@@ -1983,4 +2007,3 @@ main (int argc, char **argv)
     free_memory ();
     return err; /* err == 0 */
 }
-#undef do_rename
