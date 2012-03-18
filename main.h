@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 #define APP_VERSION                 "0.0.1"
-#define PLUGINS_PATH                "./plugins/"
+#define PLUGINS_PATH                "/usr/lib/molt/"
 
 #define OPT_EXCLUDE_DIRS            'D'
 #define OPT_EXCLUDE_FILES           'F'

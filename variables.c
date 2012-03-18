@@ -1,4 +1,6 @@
 
+#define _UNUSED_            __attribute__ ((unused)) 
+
 /* C */
 #include <stdlib.h> /* atoi() */
 
@@ -10,7 +12,7 @@
 #include "variables.h"
 
 gchar *
-var_get_value_nb (const gchar *file, GPtrArray *params, GError **error)
+var_get_value_nb (const gchar *file, GPtrArray *params, GError **error _UNUSED_)
 {
     static const gchar *last_file   = NULL;
     static guint        cnt         = 0;

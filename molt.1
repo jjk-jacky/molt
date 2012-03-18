@@ -1,0 +1,277 @@
+.TH molt 1 "2012-03-18" 0.0.1 "batch renaming utility"
+
+.SH NAME
+molt \- Renames specified files by applying specified rules
+
+.SH SYNOPSIS
+.B molt
+[\fIOPTION\fR]... \fIRULE\fR... [\fIFILE\fR]...
+
+.SH DESCRIPTION
+\fBmolt\fR is an utility to rename batch of files using a collection of rules.
+You can define as many rules as you want; Rules can have parameters, so you can
+use the same rule multiple times.
+.P
+You can also use "variables" in the new filename. Such variables will then be
+resolved when the rule \fB--vars\fR is applied (Note: rule \fB--tpl\fR also
+resolves variables), thus allowing you to continue processing the name
+afterwards.
+.P
+In addition to internal rules & variables, molt can be extended by plugins,
+adding rules and/or variables.
+
+.SH OPTIONS
+.PP
+.B -D, --exclude-directories
+.RS 4
+Ignore directories from specified files
+.RE
+.PP
+.B -F, --exclude-files
+.RS 4
+Ignore files from specified files
+.RE
+.PP
+.B -S, --exclude-symlinks
+.RS 4
+Ignore symlinks from specified files
+.RE
+.PP
+.B -i, --from-stdin
+.RS 4
+Get list of files from stdin
+.RE
+.PP
+.B -P, --process-fullname
+.RS 4
+Send the full path/name to the rules (Imply \fB--output-fullname\fR)
+.RE
+.PP
+.B -p, --allow-path
+.RS 4
+Allow (relative/absolute) paths in new filenames (Imply \fB--output-fullname\fR)
+.RE
+.PP
+.B -m, --make-parents
+.RS 4
+Create parents if needed
+.RE
+.PP
+.B -O, --output-fullname
+.RS 4
+Output full path/names
+.RE
+.PP
+.B -B, --output-both-names
+.RS 4
+Output the old then the new filename for each file
+.RE
+.PP
+.B -N, --output-new-names
+.RS 4
+Output the new filename for each file
+.RE
+.PP
+.B -R, --only-rules
+.RS 4
+Only apply the rules and output results, without any conflict detection (Imply
+\fB--dry-run\fR)
+.RE
+.PP
+.B -n, --dry-run
+.RS 4
+Do not rename anything
+.RE
+.PP
+.B -C, --continue-on-error
+.RS 4
+Process as much as possible, even on errors or when conflicts are detected
+.RE
+.PP
+.B -d, --debug
+.RS 4
+Enable debug mode - Specify twice for verbose output
+.RE
+.PP
+.B -h, --help
+.RS 4
+Show help screen and exit - Specify twice for verbose output
+.RE
+.PP
+.B -V, --version
+.RS 4
+Show version information and exit
+.RE
+
+.SH ABOUT RULES
+Rules are an essential part of the renaming process in molt, as they will
+determine the new name for each file. Rules are applied in the order they were
+defined, and can be re-used as many times as you want. Not all rules need to
+effectively change the name.
+.P
+Some rules don't require a parameter, will others do. While each rule can have
+its own parsing engine, the default is that the string will be split using slash
+( / ) as separator.
+.P
+For example, to specify "foo" as first parameter, and "bar" as third one
+(without a second parameter), one would use :
+.RS 8
+--rule foo//bar
+.RE
+(Note that some rule might not accept a empty parameter.)
+.P
+The first rule received the current file name as starting point, while others
+uses the name as given by the previous rules. No check is done during this
+process, only at the end, so it doesn't matter if a name is invalid or already
+in use unless it's the last rule.
+.P
+Once all rules have been ran, molt will then check whether said name if free
+or not, and if not mark the file as being \fIin conflict\fR. molt handles
+"avoidable conflicts" (i.e. conflicts that can be avoided by first renaming a
+file to a temporary name, then after other files have been renamed completing
+the rename) and won't rename any files at all if any unavoidable conflict was
+found (unless \fB--continue-on-error\fR was used).
+
+.SH RULES
+.PP
+.B --upper
+.RS 4
+Convert to uppercase
+.RE
+.PP
+.B --lower
+.RS 4
+Convert to lowercase
+.RE
+.PP
+.B --camel
+.RS 4
+Convert to Camel Case. The name is first converted to lowercase, then the first
+character is converted to uppercase, as are characters following any printable
+character which is not a space or an alphanumeric character.
+.P
+Note that this only applies up to the last dot ( . ), so that if file have
+an extension, said extension isn't affected. For example, a file "foo.bar.ext"
+would be renamed to "Foo.Bar.ext"
+.RE
+.PP
+.B --list
+.RS 4
+Use list of new names read from standard input (stdin). It is assumed that each
+new name will be on a different line, hence the new line character (\fB\\n\fR)
+cannot be part of a new name, and will obviously be stripped.
+.P
+Note that you cannot use this rule as well as option \fB--from-stdin\fR
+.RE
+.PP
+.B --sr \fIsearch\fR[/\fIreplacement\fR[/\fIoptions\fR]]
+.RS 4
+Search all occurrences of \fIsearch\fR and replace them with \fIreplacement\fR.
+If no \fIreplacement\fR is specified, \fIsearch\fR will simply be removed.
+.P
+\fIoptions\fR can be :
+.RS 4
+\fBi\fR : make search case-insensitive
+.RE
+.RE
+.PP
+.B --regex \fIpattern\fR[/\fIreplacement\fR[/\fIoptions\fR]]
+.RS 4
+Find all match for regular expression \fIpattern\fR and replace them with
+\fIreplacement\fR. If no \fIreplacement\fR is specified, matches will simply be
+removed.
+.P
+\fIoptions\fR can be :
+.RS 4
+\fBi\fR : make search case-insensitive
+.RE
+.RE
+.PP
+.B --vars
+.RS 4
+Resolves any and all variables (See \fBVARIABLES\fR below)
+.RE
+.PP
+.B --tpl \fItemplate\fR
+.RS 4
+Sets all filenames to \fItemplate\fR. This only makes sense when using variables,
+hence this rule will also resolves any and all variables (See \fBVARIABLES\fR
+below).
+.RE
+
+.SH ABOUT VARIABLES
+You can use "variables" in the new filenames, which will be resolved independently
+for each file. The syntax is to put the variable's name in between dollar signs,
+e.g: \t $FOOBAR$
+.P
+Some variables can also support optional parameters. Those can be specified
+using colon as separator, e.g: \t $FOOBAR:PARAM1:PARAM2$
+.P
+Variables are not automatically resolved, you need to use the rule \fB--vars\fR
+in order to have them resolved, which gives you the ability to determine
+when resolving happens, as well as continue processing with more rules afterwards.
+.P
+Note that rule \fB--tpl\fR also resolves variables.
+
+.SH VARIABLES
+.PP
+\fBNB\fR[:\fIdigits\fR[:\fIstart\fR[:\fIincrement\fR]]]
+.RS 4
+Resolves to a number, starting at \fIstart\fR (default: 1) and incremented by
+\fIincrement\fR (default: 1; can be negative) for each file using it. The number
+will have at least \fIdigits\fR digits, padded with zeros.
+.P
+This means that is you use the variable on only some of the files (e.g. through
+a rule like \fB--sr\fR) then counter will only be incremented for each of those
+files, "skipping" the files whose name doesn't include the variables.
+.P
+However, if used multiple times within the same name, it'll only be incremented
+once.
+.RE
+
+.SH PLUGINS
+You can install plugins to extend molt's functionality. A plugin can add one
+or more rules and/or one or more variables.
+.P
+Plugins shall be installed in \fB/usr/lib/molt\fR
+
+.SH CONFLICTS
+Before renaming, molt will check to see if there are any conflicts, that is
+if any of the new names are already in use. molt automatically handles
+"avoidable conflicts," so if a new name is used by one of the file to be
+renamed, molt will perform two-step renaming using a temporary name in order
+to successfully perform the operation.
+.P
+In case of unavoidable conflicts (name already in use in the file system,
+without pending renaming), molt will not rename any file, unless option
+\fB--continue-on-error\fR was used.
+
+.SH RETURN VALUE
+molt returns 0 in case of success, else it uses bit field with the following
+values :
+.P
+ 1 Syntax error (e.g. invalid option, etc)
+
+ 2 File not found
+
+ 4 Rule failed
+
+ 8 Invalid new name
+
+16 New name already in use
+
+32 Internal conflict (multiple files with the same new name)
+
+64 Rename operation failed
+
+.SH BUGS
+They're probably crawling somewhere in there... if you happen to catch one,
+(or more) report it and I'll do my best to squash it.
+
+.SH REPOSITORY
+You can find the latest source code of \fBmolt\fR as well as report bugs and/or
+suggest features on its BitBucket repository, available at
+.I https://bitbucket.org/jjacky/molt
+
+.SH AUTHOR
+Olivier Brunel <i.am.jack.mail AT gmail DOT com>

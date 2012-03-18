@@ -734,7 +734,7 @@ static option_t options[] = {
       "Output the new filename for each file" },
     { OPT_ONLY_RULES,           "only-rules",
       "Only apply the rules and output results,\nwithout any conflict detection\n"
-      "(Implies --dry-run)" },
+      "(Imply --dry-run)" },
 
     { OPT_DRY_RUN,              "dry-run",
       "Do not rename anything" },

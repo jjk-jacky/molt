@@ -1,6 +1,8 @@
 
 #define _GNU_SOURCE     /* for strcasestr() in string.h */
 
+#define _UNUSED_            __attribute__ ((unused)) 
+
 /* C */
 #include <string.h>
 #include <ctype.h>
@@ -11,30 +13,30 @@
 #include "internal.h"
 
 gboolean
-rule_to_lower (gpointer    *data,
+rule_to_lower (gpointer    *data _UNUSED_,
                const gchar *name,
                gchar      **new_name,
-               GError     **error)
+               GError     **error _UNUSED_)
 {
 	*new_name = g_utf8_strdown (name, -1);
 	return TRUE;
 }
 
 gboolean
-rule_to_upper (gpointer    *data,
+rule_to_upper (gpointer    *data _UNUSED_,
                const gchar *name,
                gchar      **new_name,
-               GError     **error)
+               GError     **error _UNUSED_)
 {
     *new_name = g_utf8_strup (name, -1);
     return TRUE;
 }
 
 gboolean
-rule_camel (gpointer    *data,
+rule_camel (gpointer    *data _UNUSED_,
             const gchar *name,
             gchar      **new_name,
-            GError     **error)
+            GError     **error _UNUSED_)
 {
     gchar *s;
     gchar *e;
@@ -47,7 +49,7 @@ rule_camel (gpointer    *data,
     /* we'll turn to upper each char after a space/punct, but not touch the ext */
     for (s = *new_name; *s != '\0' && (!e || s < e); ++s)
     {
-        if (isspace (*s) || ispunct (*s))
+        if (ispunct (*s))
         {
             do_next = TRUE;
         }
@@ -130,7 +132,7 @@ gboolean
 rule_sr (gpointer    *_data,
          gchar       *name,
 		 gchar      **new_name,
-		 GError     **error)
+		 GError     **error _UNUSED_)
 {
     sr_t        *data = *_data;
     size_t       len_org;
@@ -198,7 +200,7 @@ rule_sr (gpointer    *_data,
 
 gboolean
 rule_list_init (gpointer  *data,
-                GPtrArray *params,
+                GPtrArray *params _UNUSED_,
                 GError   **error)
 {
     GError *local_err = NULL;
@@ -216,9 +218,9 @@ rule_list_init (gpointer  *data,
 
 gboolean
 rule_list (gpointer    *data,
-           const gchar *name,
+           const gchar *name _UNUSED_,
            gchar      **new_name,
-           GError     **error)
+           GError     **error _UNUSED_)
 {
     FILE *stream = *data;
     char  buf[PATH_MAX];
@@ -359,10 +361,10 @@ rule_regex (gpointer    *data,
 
 
 gboolean
-rule_variables (gpointer    *data,
-                const gchar *name,
-                gchar      **new_name,
-                GError     **error)
+rule_variables (gpointer    *data _UNUSED_,
+                const gchar *name _UNUSED_,
+                gchar      **new_name _UNUSED_,
+                GError     **error _UNUSED_)
 {
     /* this rule doesn't actually do anything, it's just a rule with the flag
      * parse_variables enabled, to do just that. But that is done by molt, and
@@ -389,9 +391,9 @@ rule_tpl_init (gpointer  *data,
 
 gboolean
 rule_tpl (gpointer    *data,
-          const gchar *name,
+          const gchar *name _UNUSED_,
           gchar      **new_name,
-          GError     **error)
+          GError     **error _UNUSED_)
 {
     *new_name = g_strdup (*data);
     return TRUE;
