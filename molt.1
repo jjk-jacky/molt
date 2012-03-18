@@ -45,11 +45,15 @@ Get list of files from stdin
 .B -P, --process-fullname
 .RS 4
 Send the full path/name to the rules (Imply \fB--output-fullname\fR)
+.P
+See \fBNOTES\fR below regarding moving files.
 .RE
 .PP
 .B -p, --allow-path
 .RS 4
 Allow (relative/absolute) paths in new filenames (Imply \fB--output-fullname\fR)
+.P
+See \fBNOTES\fR below regarding moving files.
 .RE
 .PP
 .B -m, --make-parents
@@ -263,6 +267,18 @@ values :
 32 Internal conflict (multiple files with the same new name)
 
 64 Rename operation failed
+
+.SH NOTES
+molt is not an advanced mv(1), it is a (batch) renaming utility, and as such
+only ever tries to \fIrename\fR files (whereas mv can also effectively
+\fImove\fR files).
+.P
+While with certain options (\fB--process-fullname\fR and \fB--allow-path\fR) it
+can also seems like it moves file, this will only work if said files remain on
+the same file system.
+.P
+Trying to have a file moved to another file system is likely to fail with an
+error such as "Invalid cross-device link"
 
 .SH BUGS
 They're probably crawling somewhere in there... if you happen to catch one,
