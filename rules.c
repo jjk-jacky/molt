@@ -367,7 +367,7 @@ rule_variables (gpointer    *data _UNUSED_,
                 GError     **error _UNUSED_)
 {
     /* this rule doesn't actually do anything, it's just a rule with the flag
-     * parse_variables enabled, to do just that. But that is done by molt, and
+     * resolve_variables enabled, to do just that. But that is done by molt, and
      * the rule itself doesn't do anything */
     return TRUE;
 }

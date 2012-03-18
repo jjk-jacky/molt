@@ -46,7 +46,7 @@ typedef struct {
     rule_init_fn    init;
     rule_run_fn     run;
     rule_destroy_fn destroy;
-    gboolean        parse_variables;
+    gboolean        resolve_variables;
 } rule_def_t;
 
 typedef enum {

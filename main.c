@@ -603,7 +603,7 @@ get_var_value (action_t *action, gchar var[255], guint len, GError **_error)
 }
 
 static gboolean
-parse_variables (action_t *action, gchar **new_name, GError **_error)
+resolve_variables (action_t *action, gchar **new_name, GError **_error)
 {
     GError      *local_err  = NULL;
     gchar       *s, *ss;
@@ -1098,7 +1098,7 @@ add_action_for_file (gchar *file, GFileTest test_types,
     command_t   *command;
     gchar       *new_name;
     GSList      *l;
-    gboolean     has_parsed_variables = FALSE;
+    gboolean     has_resolved_variables = FALSE;
     
     if (!g_file_test (file, G_FILE_TEST_EXISTS))
     {
@@ -1175,12 +1175,12 @@ add_action_for_file (gchar *file, GFileTest test_types,
                 action->new_name = new_name;
                 new_name = NULL;
             }
-            /* should we parse variables? */
-            if (command->rule->parse_variables)
+            /* should we resolve variables? */
+            if (command->rule->resolve_variables)
             {
                 debug (LEVEL_DEBUG, "parsing variables\n");
-                has_parsed_variables = TRUE;
-                if (G_LIKELY (parse_variables (action, &new_name, &local_err)))
+                has_resolved_variables = TRUE;
+                if (G_LIKELY (resolve_variables (action, &new_name, &local_err)))
                 {
                     debug (LEVEL_VERBOSE, "new name: %s\n", new_name);
                     g_free (action->new_name);
@@ -1189,7 +1189,7 @@ add_action_for_file (gchar *file, GFileTest test_types,
                 }
                 else
                 {
-                    error (ERROR_RULE_FAILED, "%s: failed to parse variables: %s\n",
+                    error (ERROR_RULE_FAILED, "%s: failed to resolve variables: %s\n",
                            action->file, local_err->message);
                     g_clear_error (&local_err);
                     /* we can't continue processing this action now */
@@ -1211,7 +1211,7 @@ add_action_for_file (gchar *file, GFileTest test_types,
         }
     }
     debug (LEVEL_DEBUG, "all commands applied\n");
-    if (has_parsed_variables)
+    if (has_resolved_variables)
     {
         /* clear cache of per-file values */
         g_hash_table_destroy (var_per_file);
@@ -1303,7 +1303,7 @@ main (int argc, char **argv)
     command_t     *command;
     GPtrArray     *ptr_arr;
     guint          i;
-    gboolean       do_parse_variables = FALSE;
+    gboolean       do_resolve_variables = FALSE;
     
     gchar         *option;
     GFileTest      test_types = G_FILE_TEST_IS_REGULAR | G_FILE_TEST_IS_DIR
@@ -1345,7 +1345,7 @@ main (int argc, char **argv)
     rule->init = NULL;
     rule->run = rule_to_lower;
     rule->destroy = NULL;
-    rule->parse_variables = FALSE;
+    rule->resolve_variables = FALSE;
     add_rule (rule);
     
     rule->name = "upper";
@@ -1355,7 +1355,7 @@ main (int argc, char **argv)
     rule->init = NULL;
     rule->run = rule_to_upper;
     rule->destroy = NULL;
-    rule->parse_variables = FALSE;
+    rule->resolve_variables = FALSE;
     add_rule (rule);
     
     rule->name = "camel";
@@ -1365,7 +1365,7 @@ main (int argc, char **argv)
     rule->init = NULL;
     rule->run = rule_camel;
     rule->destroy = NULL;
-    rule->parse_variables = FALSE;
+    rule->resolve_variables = FALSE;
     add_rule (rule);
     
     rule->name = "sr";
@@ -1377,7 +1377,7 @@ main (int argc, char **argv)
     rule->init = rule_sr_init;
     rule->run = (rule_run_fn) rule_sr;
     rule->destroy = rule_sr_destroy;
-    rule->parse_variables = FALSE;
+    rule->resolve_variables = FALSE;
     add_rule (rule);
     
     rule->name = "list";
@@ -1387,7 +1387,7 @@ main (int argc, char **argv)
     rule->init = rule_list_init;
     rule->run = rule_list;
     rule->destroy = NULL;
-    rule->parse_variables = FALSE;
+    rule->resolve_variables = FALSE;
     add_rule (rule);
     
     rule->name = "regex";
@@ -1399,27 +1399,27 @@ main (int argc, char **argv)
     rule->init = rule_regex_init;
     rule->run = rule_regex;
     rule->destroy = rule_regex_destroy;
-    rule->parse_variables = FALSE;
+    rule->resolve_variables = FALSE;
     add_rule (rule);
     
     rule->name = "vars";
-    rule->description = "Parse variables";
+    rule->description = "Resolve variables";
     rule->help = NULL;
     rule->param = PARAM_NONE;
     rule->init = NULL;
     rule->run = rule_variables;
     rule->destroy = NULL;
-    rule->parse_variables = TRUE;
+    rule->resolve_variables = TRUE;
     add_rule (rule);
     
     rule->name = "tpl";
-    rule->description = "Apply specified template (parse variables)";
+    rule->description = "Apply specified template (resolve variables)";
     rule->help = NULL;
     rule->param = PARAM_NO_SPLIT;
     rule->init = rule_tpl_init;
     rule->run = rule_tpl;
     rule->destroy = NULL;
-    rule->parse_variables = TRUE;
+    rule->resolve_variables = TRUE;
     add_rule (rule);
     
     g_free (rule);
@@ -1685,9 +1685,9 @@ main (int argc, char **argv)
             if (command)
             {
                 commands = g_slist_append (commands, command);
-                if (command->rule->parse_variables)
+                if (command->rule->resolve_variables)
                 {
-                    do_parse_variables = TRUE;
+                    do_resolve_variables = TRUE;
                 }
             }
             
@@ -1752,7 +1752,7 @@ main (int argc, char **argv)
     }
     
     /* do we need variables? */
-    if (do_parse_variables)
+    if (do_resolve_variables)
     {
         init_variables ();
     }
@@ -1806,7 +1806,7 @@ main (int argc, char **argv)
         }
     }
     free_commands (commands);
-    if (do_parse_variables)
+    if (do_resolve_variables)
     {
         /* clear cache of per-file values */
         g_hash_table_destroy (var_per_file);
