@@ -1849,26 +1849,26 @@ main (int argc, char **argv)
     }                                                   \
 } while (0)
 
-#define do_rename(old_name, new_name)   do {                            \
-        if (make_parents)                                               \
-        {                                                               \
-            gchar *s;                                                   \
-            if (NULL != (s = strrchr (new_name, '/')))                  \
-            {                                                           \
-                *s = '\0';                                              \
-                debug (LEVEL_DEBUG, "ensuring %s exists\n", new_name);  \
-                g_mkdir_with_parents (new_name, 0755);                  \
-                *s = '/';                                               \
-            }                                                           \
-        }                                                               \
-        debug (LEVEL_DEBUG, "renaming %s to %s\n", old_name, new_name); \
-        if (G_UNLIKELY (0 != (state = rename (old_name, new_name))))    \
-        {                                                               \
-            err |= ERROR_RENAME_FAILURE;                                \
-            action_error ("%s: failed to rename to %s: %s\n",           \
-                        action->file, new_name, strerror (errno));      \
-        }                                                               \
-    } while (0)
+#define do_rename(old_name, new_name)   do {                        \
+    if (make_parents)                                               \
+    {                                                               \
+        gchar *s;                                                   \
+        if (NULL != (s = strrchr (new_name, '/')))                  \
+        {                                                           \
+            *s = '\0';                                              \
+            debug (LEVEL_DEBUG, "ensuring %s exists\n", new_name);  \
+            g_mkdir_with_parents (new_name, 0755);                  \
+            *s = '/';                                               \
+        }                                                           \
+    }                                                               \
+    debug (LEVEL_DEBUG, "renaming %s to %s\n", old_name, new_name); \
+    if (G_UNLIKELY (0 != (state = rename (old_name, new_name))))    \
+    {                                                               \
+        err |= ERROR_RENAME_FAILURE;                                \
+        action_error ("%s: failed to rename to %s: %s\n",           \
+                    action->file, new_name, strerror (errno));      \
+    }                                                               \
+} while (0)
     
     /* process actions: rename files & construct output */
     for (l = actions_list; l; l = l->next)
