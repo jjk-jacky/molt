@@ -42,12 +42,14 @@ molt.1.gz: $(MANFILES)
 
 
 install:
-	install -D -m755 molt $(DESTDIR)/usr/bin/molt
+	install -Ds -m755 molt $(DESTDIR)/usr/bin/molt
 	install -D -m644 molt.1.gz $(DESTDIR)/usr/share/man/man1/molt.1.gz
+	mkdir $(DESTDIR)/usr/lib/molt
 
 uninstall:
 	rm -f $(DESTDIR)/usr/bin/molt
 	rm -f $(DESTDIR)/usr/share/man/man1/molt.1.gz
+	rmdir $(DESTDIR)/usr/lib/molt
 
 clean:
 	rm -f $(PROGRAMS)
