@@ -1877,7 +1877,13 @@ main (int argc, char **argv)
         name = NULL;
         state = -1;
         
-        if (action->state & ST_TO_RENAME)
+        if (only_rules)
+        {
+            name = action->new_name;
+            nb_two_steps = 0;
+            state = 0;
+        }
+        else if (action->state & ST_TO_RENAME)
         {
             /* only rename if we "can" do the rename, i.e. either there was no
              * conflicts found, or continue-on-error is set */
@@ -1940,14 +1946,7 @@ main (int argc, char **argv)
         }
         if (!name)
         {
-            if (only_rules && action->new_name)
-            {
-                name = action->new_name;
-            }
-            else
-            {
-                name = action->file;
-            }
+            name = action->file;
         }
         /* output can be shown if no two-steps renaming are required, else
          * we prepare it but only show it once everything was processed, in
